@@ -25,8 +25,7 @@ func (c *mockHTTPClient) Do(*http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestConcurrent(t *testing.T) {
-
+func TestHttpScraper(t *testing.T) {
 	index := [][]string{
 		{"GET", "http://example.com/products/1"},
 		{"GET", "http://example.com/products/2"},
@@ -38,8 +37,9 @@ func TestConcurrent(t *testing.T) {
 		{"GET", "http://acme.com/catalogue/produts/1111/details"},
 	}
 
-	scraper := &JsonScraper{
+	scraper := &HTTPScraper{
 		Workers:         10,
+		Buffer:          len(index),
 		PageLoadTimeout: 30,
 		HttpClientProviderFn: func() requestDoer {
 			return &mockHTTPClient{Latency: 500 * time.Millisecond}
@@ -48,6 +48,8 @@ func TestConcurrent(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	scraper.Start(ctx)
+
+	startTime := time.Now()
 
 	for _, data := range index {
 		req, err := http.NewRequest(data[0], data[1], nil)
@@ -60,13 +62,20 @@ func TestConcurrent(t *testing.T) {
 	scraper.Done(context.TODO())
 	cancel()
 
-	if len(index) != int(scraper.NumScrapedPages()) {
-		t.Fatalf("not enough requests processed: expected %d, found %d", len(index), int(scraper.NumScrapedPages()))
+	stopTime := time.Now()
+	elapsed := stopTime.Sub(startTime)
+
+	if elapsed > time.Second {
+		t.Fatalf("requests were not processed in parallel: took %s", elapsed)
+	}
+
+	if len(index) != int(scraper.ScrapedPages()) {
+		t.Fatalf("not enough requests processed: expected %d, found %d", len(index), int(scraper.ScrapedPages()))
 	}
 
 }
 
-func TestGracefulTermination(t *testing.T) {
+func TestHTTPScraperGracefulTermination(t *testing.T) {
 
 	index := [][]string{
 		{"GET", "http://example.com/products/1"},
@@ -79,15 +88,16 @@ func TestGracefulTermination(t *testing.T) {
 		{"GET", "http://acme.com/catalogue/produts/1111/details"},
 	}
 
-	scraper := &JsonScraper{
+	scraper := &HTTPScraper{
 		Workers:         1, // no parallel processing
+		Buffer:          len(index),
 		PageLoadTimeout: 30,
 		HttpClientProviderFn: func() requestDoer {
 			return &mockHTTPClient{Latency: 500 * time.Millisecond}
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	scraper.Start(ctx)
 
@@ -103,7 +113,45 @@ func TestGracefulTermination(t *testing.T) {
 
 	scraper.Done(context.TODO())
 
-	if len(index) == int(scraper.NumScrapedPages()) {
+	if len(index) == int(scraper.ScrapedPages()) {
+		t.Fatal("request processing should have terminated early")
+	}
+
+}
+
+func TestHTTPScraperGracefulShutdownShouldCancelWithTimeout(t *testing.T) {
+
+	index := [][]string{{"GET", "http://example.com/products/1"}}
+
+	scraper := &HTTPScraper{
+		Workers:         1, // no parallel processing
+		Buffer:          len(index),
+		PageLoadTimeout: 30,
+		HttpClientProviderFn: func() requestDoer {
+			return &mockHTTPClient{Latency: 10 * time.Second}
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	scraper.Start(ctx)
+
+	for _, data := range index {
+		req, err := http.NewRequest(data[0], data[1], nil)
+		if err != nil {
+			t.Fatalf("error creating request: %v", err)
+		}
+		if err := scraper.Scrape(*req); err != nil {
+			// could be failing because of cancellation
+		}
+	}
+
+	doneCtx, doneCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer doneCancel()
+
+	scraper.Done(doneCtx)
+
+	if len(index) == int(scraper.ScrapedPages()) {
 		t.Fatal("request processing should have terminated early")
 	}
 

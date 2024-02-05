@@ -19,13 +19,13 @@ func defaultRequestDoer() requestDoer {
 }
 
 func httpWorker(wg *sync.WaitGroup, reqDoer requestDoer, handler scrapeResponseHandler,
-	reqCh <-chan http.Request, closeSig <-chan struct{}, postFn func()) {
+	reqCh <-chan http.Request, sigExit <-chan struct{}, postFn func()) {
 
 	defer wg.Done()
 
 	for {
 		select {
-		case <-closeSig:
+		case <-sigExit:
 			return
 		case req, ok := <-reqCh:
 			if !ok {
@@ -54,21 +54,24 @@ func defaultScrapeResponseHandler(res *http.Response, err error) {
 type httpClientProviderFn func() requestDoer
 type scrapeResponseHandler func(*http.Response, error)
 
-// An HTTP scraper capable of reading JSON response body into a struct and
-// perform some handling logic.
+// The HTTPScraper is capable of making HTTP requests in parallel using goroutines
+// and then call custom handler logic defined by the ResponseHandler function.
 //
-// The JsonScraper is capable of making HTTP requests in parallel using goroutines
-type JsonScraper struct {
+// Note: HTTPScraper runs requests in goroutines so any handler function used should
+// be design not to introduce any race condition
+type HTTPScraper struct {
 	Workers              int
+	Buffer               int
 	PageLoadTimeout      time.Duration
 	HttpClientProviderFn httpClientProviderFn
 	ResponseHandler      scrapeResponseHandler
 
 	scrapedPages int64
 	reqCh        chan http.Request
-	signalClose  chan struct{}
-	wg           *sync.WaitGroup
+	sigExit      chan struct{}
 	closeOnce    sync.Once
+	exitOnce     sync.Once
+	wg           *sync.WaitGroup
 }
 
 // Starts scraper's workers.
@@ -77,7 +80,7 @@ type JsonScraper struct {
 // If context is cancelled, the scraper's input channel is closed and the process will
 // exit after in-flight requests are processed. To wait for graceful termination, make
 // sure the scraper.Done() method is called.
-func (sc *JsonScraper) Start(ctx context.Context) {
+func (sc *HTTPScraper) Start(ctx context.Context) {
 
 	if sc.Workers <= 0 {
 		sc.Workers = 1
@@ -95,35 +98,34 @@ func (sc *JsonScraper) Start(ctx context.Context) {
 		atomic.AddInt64(&sc.scrapedPages, 1)
 	}
 
-	// allocate a bufferend channel with twice as much space as the
-	// number of workers to allow some space before blocking client
-	bufSize := sc.Workers * 2
+	bufSize := sc.Buffer
+	if bufSize <= 0 {
+		bufSize = sc.Workers * 2
+	}
 	sc.reqCh = make(chan http.Request, bufSize)
-	sc.signalClose = make(chan struct{})
+	sc.sigExit = make(chan struct{})
 
 	sc.wg = &sync.WaitGroup{}
 	for i := 0; i < sc.Workers; i++ {
 		sc.wg.Add(1)
-		go httpWorker(sc.wg, sc.HttpClientProviderFn(), sc.ResponseHandler, sc.reqCh,
-			sc.signalClose, incrementerFn)
+		go httpWorker(sc.wg, sc.HttpClientProviderFn(), sc.ResponseHandler,
+			sc.reqCh, sc.sigExit, incrementerFn)
 	}
 
-	var workersCloser = func() {
+	var exitHandler = func() {
 		select {
 		case <-ctx.Done():
-			sc.closeOnce.Do(func() { close(sc.signalClose) })
+			sc.exitOnce.Do(func() { close(sc.sigExit) })
 		}
 	}
-	go workersCloser()
+	go exitHandler()
 }
 
 // Add a new page scraping request into the queue
-func (sc *JsonScraper) Scrape(req http.Request) error {
+func (sc *HTTPScraper) Scrape(req http.Request) error {
 	select {
-	case _, ok := <-sc.signalClose:
-		if !ok {
-			return fmt.Errorf("scraper close or not started yet.")
-		}
+	case <-sc.sigExit:
+		return fmt.Errorf("scraper close or not started yet.")
 	default:
 		sc.reqCh <- req
 	}
@@ -134,9 +136,8 @@ func (sc *JsonScraper) Scrape(req http.Request) error {
 //
 // After Done() is called, the scraper will be unable to receive further requests.
 // Attempting to do so will result in a panic.
-func (sc *JsonScraper) Done(ctx context.Context) {
-	sc.closeOnce.Do(func() { close(sc.signalClose) })
-	defer close(sc.reqCh)
+func (sc *HTTPScraper) Done(ctx context.Context) {
+	sc.closeOnce.Do(func() { close(sc.reqCh) })
 
 	done := make(chan struct{})
 	go func() {
@@ -150,9 +151,10 @@ func (sc *JsonScraper) Done(ctx context.Context) {
 	case <-ctx.Done():
 		// context cancelled or timed-out
 	}
+	sc.exitOnce.Do(func() { close(sc.sigExit) })
 }
 
 // Returns the total number of pages scraped including failed requests
-func (sc *JsonScraper) NumScrapedPages() int64 {
+func (sc *HTTPScraper) ScrapedPages() int64 {
 	return atomic.LoadInt64(&sc.scrapedPages)
 }
