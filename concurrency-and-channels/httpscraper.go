@@ -135,7 +135,7 @@ func (sc *HTTPScraper) Start(ctx context.Context) {
 func (sc *HTTPScraper) Scrape(req http.Request) error {
 	select {
 	case <-sc.sigExit:
-		return fmt.Errorf("scraper close or not started yet.")
+		return fmt.Errorf("scraper closed or not yet started.")
 	default:
 		sc.reqCh <- req
 	}
