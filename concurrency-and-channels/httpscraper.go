@@ -1,3 +1,7 @@
+// Fan-out pattern with goroutines
+// This implementation of an http scraper uses the fan-out pattern with goroutines
+// to scrape webpages concurrently using multiple workers
+
 package main
 
 import (
@@ -10,14 +14,20 @@ import (
 	"time"
 )
 
+// requestDoer is an interface that wraps Do method of the http client
 type requestDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
+// Returns the real http.Client{} struct from the standard net library
 func defaultRequestDoer() requestDoer {
 	return &http.Client{}
 }
 
+// httpWorker handles scraping request submitted to the reqCh channel.
+//
+// This function allows task cancellation with graceful tremination of in-flight requests
+// using the sigExit channel.
 func httpWorker(wg *sync.WaitGroup, reqDoer requestDoer, handler scrapeResponseHandler,
 	reqCh <-chan http.Request, sigExit <-chan struct{}, postFn func()) {
 
@@ -32,14 +42,14 @@ func httpWorker(wg *sync.WaitGroup, reqDoer requestDoer, handler scrapeResponseH
 				return // channel closed
 			}
 			resp, err := reqDoer.Do(&req)
-			handler(resp, err)
+			handler(&req, resp, err)
 			postFn()
 		}
 	}
 }
 
 // Dummy scrape response handler to use if none is provider to the scraper
-func defaultScrapeResponseHandler(res *http.Response, err error) {
+func defaultScrapeResponseHandler(req *http.Request, res *http.Response, err error) {
 	if err != nil {
 		fmt.Printf("an error occurred while scraping url %s: %v\n", res.Request.URL, err)
 	}
@@ -52,7 +62,7 @@ func defaultScrapeResponseHandler(res *http.Response, err error) {
 }
 
 type httpClientProviderFn func() requestDoer
-type scrapeResponseHandler func(*http.Response, error)
+type scrapeResponseHandler func(*http.Request, *http.Response, error)
 
 // The HTTPScraper is capable of making HTTP requests in parallel using goroutines
 // and then call custom handler logic defined by the ResponseHandler function.
