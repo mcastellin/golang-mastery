@@ -129,14 +129,26 @@ func (t *Topic) Subscribe() Subscription {
 //   - receive done signal from Topic. Topic is no longer active, so
 //     all loops will exit
 //
-// This naive implementation doesn't account for a subscriber that won't
-// consume its last messages. TODO we need to spawn a goroutine that will
-// disable the loop temporarily until messages are consumed, or forcefully closed
+// Note that fetchUpdates and sendUpdates have been separated into two
+// cases. This is to avoid blocking the stream write while inside one of
+// the select cases. Bad subscription consumers can cause the loop to block
+// and become unresponsive to closing requests.
+// This scenario is very possible as if a subscriber wants to close the stream
+// it could no longer be consuming messages from the queue.
 func (t *Topic) loop(stream chan []Event, closing chan chan error) {
 	lastUpdate := time.Now()
+	var updates []Event
+
 	for {
-		var sendEvents <-chan time.Time
-		sendEvents = time.After(DefaultPollInterval)
+		var sendUpdates chan<- []Event
+		var fetchUpdates <-chan time.Time
+		if len(updates) > 0 {
+			// enable send to stream
+			sendUpdates = stream
+		} else {
+			// enable fetch new updates
+			fetchUpdates = time.After(DefaultPollInterval)
+		}
 
 		select {
 		case <-t.done:
@@ -146,17 +158,15 @@ func (t *Topic) loop(stream chan []Event, closing chan chan error) {
 			close(stream)
 			errc <- nil
 			return
-		case <-sendEvents:
+		case <-fetchUpdates:
 			if !t.store.HasUpdates(lastUpdate) {
 				break
 			}
-			updates := t.store.UpdatesSince(lastUpdate)
-			if len(updates) > 0 {
-				last := updates[len(updates)-1]
-				// TODO: update has to be decoupled or a bad subscriber will block a close
-				stream <- updates
-				lastUpdate = last.ts
-			}
+			updates = t.store.UpdatesSince(lastUpdate)
+		case sendUpdates <- updates:
+			last := updates[len(updates)-1]
+			lastUpdate = last.ts
+			updates = []Event{}
 		}
 	}
 }
