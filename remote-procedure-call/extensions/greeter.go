@@ -10,8 +10,20 @@ func (p *greeter) Name() string {
 }
 
 // Sends a greeting message
-func (p *greeter) Do(args *Input, reply *Reply) error {
+func (p *greeter) Do(_ *Input, reply *Reply) error {
 	reply.Message = "Hello there!"
+
+	return nil
+}
+
+// Renders docstring for greeter plugin
+func (p *greeter) Docs(_ *Input, reply *Reply) error {
+	reply.Message = `Greeter plugin
+
+A plugin to send a greeting message back to the user.
+
+Name: Greeter
+Args: None`
 
 	return nil
 }
