@@ -1,4 +1,4 @@
-package main
+package dns
 
 import (
 	"bytes"
@@ -8,7 +8,10 @@ import (
 	"net"
 )
 
-// structs intentionally left blank
+// Structs intentionally left blank
+// This package DOES NOT fully implement DNS specifications as it's
+// only meant to be used as part of this toy project and an opportunity
+// to learn how to read and send UDP datagrams.
 type DNSSOA struct{}
 type DNSSRV struct{}
 type DNSMX struct{}
@@ -339,10 +342,8 @@ func (d *DNS) Serialize() []byte {
 
 	binary.BigEndian.PutUint16(bytes[4:], d.QDCount)
 	binary.BigEndian.PutUint16(bytes[6:], d.ANCount)
-	//binary.BigEndian.PutUint16(bytes[8:], d.NSCount)
-	//binary.BigEndian.PutUint16(bytes[10:], d.ARCount)
-	binary.BigEndian.PutUint16(bytes[8:], 0x0000)
-	binary.BigEndian.PutUint16(bytes[10:], 0x0000)
+	binary.BigEndian.PutUint16(bytes[8:], 0x0000)  // not encoding NSCount
+	binary.BigEndian.PutUint16(bytes[10:], 0x0000) // not encoding ARCount
 
 	offset := 12
 	for _, q := range d.Questions {
@@ -356,11 +357,30 @@ func (d *DNS) Serialize() []byte {
 	return bytes
 }
 
-func b2i(v bool) byte {
-	if v {
-		return 0x01
-	}
-	return 0x00
+func (d *DNS) ReplyTo(rr DNSResourceRecord) *DNS {
+
+	reply := &DNS{}
+	reply.ID = d.ID
+	reply.Opcode = d.Opcode
+
+	reply.QR = true
+	reply.AA = d.AA
+	reply.TC = d.TC
+	reply.RD = d.RD
+	reply.RA = d.RA
+	reply.Z = d.Z
+
+	reply.ResponseCode = d.ResponseCode
+	reply.QDCount = d.QDCount
+	reply.ANCount = 1
+	reply.NSCount = d.NSCount
+	reply.ARCount = d.ARCount
+
+	reply.Questions = d.Questions
+	reply.Answers = append(reply.Answers, rr)
+	reply.Authorities = d.Authorities
+	reply.Additionals = d.Additionals
+	return reply
 }
 
 func (d *DNS) String() string {
@@ -452,6 +472,13 @@ func encodeName(name []byte, bytes []byte, offset int) int {
 
 	bytes[offset+len(name)+1] = 0x00
 	return offset + len(name) + 1
+}
+
+func b2i(v bool) byte {
+	if v {
+		return 0x01
+	}
+	return 0x00
 }
 
 var (
