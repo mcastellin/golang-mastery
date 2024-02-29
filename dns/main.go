@@ -1,17 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"net"
 
 	"github.com/mcastellin/golang-mastery/dns/pkg/dns"
 )
 
-var store = dns.DNSLocalStore{
-	"acme.com.":      "127.0.0.1",
-	"blog.acme.com.": "127.0.0.1",
-}
-
 var upstreamResolverAddr = "8.8.8.8:53"
+
+const docstring = `DNS playground
+WARN: THIS IS NOT A PRODUCTION GRADE APPLICATION!
+
+To test DNS lookup use the following command and should resolve 127.0.0.0:
+> dig @localhost blog.acme.com
+
+serving UDP requests at port 53...`
 
 func main() {
 
@@ -21,10 +25,17 @@ func main() {
 	}
 	defer conn.Close()
 
+	store := dns.DNSLocalStore{}
+	if err := store.FromFile("dns-records.txt"); err != nil {
+		panic(err)
+	}
+
 	resolver := &dns.DNSResolver{
 		Fwd:     &dns.DNSForwarder{Upstream: upstreamResolverAddr},
 		Records: store,
 	}
+
+	fmt.Println(docstring)
 
 	for {
 		var buf [dns.MaxDNSDatagramSize]byte

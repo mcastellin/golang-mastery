@@ -1,14 +1,52 @@
 package dns
 
 import (
+	"bufio"
+	"fmt"
 	"net"
+	"os"
+	"strings"
 	"time"
 )
 
 const defaultDialTimeout = 5 * time.Second
+const defaultAnswerTTL = 300
 const MaxDNSDatagramSize = 512
 
 type DNSLocalStore map[string]string
+
+func (store *DNSLocalStore) FromFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	scan := bufio.NewScanner(file)
+	for scan.Scan() {
+		line := scan.Text()
+		strings.Trim(line, " ")
+		if strings.HasPrefix(line, ";") || len(line) == 0 {
+			continue
+		}
+		k, v, err := parseLine(line)
+		if err != nil {
+			return err
+		}
+		(*store)[k] = v
+	}
+
+	return nil
+}
+
+func parseLine(line string) (string, string, error) {
+	tokens := strings.SplitN(line, " ", 2)
+	if len(tokens) != 2 {
+		return "", "", fmt.Errorf("malformed DNS record. format should be 'example.com  10.0.1.55'")
+	}
+
+	k, v := strings.Trim(tokens[0], " "), strings.Trim(tokens[1], " ")
+	return k, v, nil
+}
 
 type DNSResolver struct {
 	Fwd     Forwarder
@@ -31,6 +69,7 @@ func (rr *DNSResolver) Resolve(req []byte) ([]byte, error) {
 			an.Type = DNSTypeA
 			an.Class = DNSClassIN
 			an.IP = net.ParseIP(resolved)
+			an.TTL = defaultAnswerTTL
 			reply = dnsReq.ReplyTo(an).Serialize()
 		}
 	}
