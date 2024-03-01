@@ -175,6 +175,7 @@ type DNSResourceRecord struct {
 	TXT []byte
 }
 
+// Decode a DNSResourceRecord struct from binary data
 func (r *DNSResourceRecord) Decode(data []byte, offset int) (int, error) {
 
 	var err error
@@ -195,6 +196,7 @@ func (r *DNSResourceRecord) Decode(data []byte, offset int) (int, error) {
 	return offset + 10 + int(r.RDLenght), nil
 }
 
+// decodeRData into struct properties
 func (r *DNSResourceRecord) decodeRData() error {
 	fmt.Println(r.Type)
 	switch r.Type {
@@ -217,6 +219,7 @@ func (r *DNSResourceRecord) computeSize() int {
 	return rSize + 10
 }
 
+// Encode DNSResourceRecord struct into binary data for transport
 func (r *DNSResourceRecord) Encode(bytes []byte, offset int) int {
 	offset = encodeName(r.Name, bytes, offset)
 
@@ -232,10 +235,13 @@ func (r *DNSResourceRecord) Encode(bytes []byte, offset int) int {
 		return offset + 10 + 4
 	default:
 		// For the purpose of this project we only encode RData for A records
-		return 0
+		r.RDLenght = uint16(0)
+		binary.BigEndian.PutUint16(bytes[offset+8:], r.RDLenght)
+		return offset + 10
 	}
 }
 
+// String representation of the DNSResourceRecord
 func (r *DNSResourceRecord) String() string {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("Name: %s ", r.Name))
@@ -279,6 +285,7 @@ type DNSHeader struct {
 	ARCount      uint16 // Number of additional records to expect
 }
 
+// Decode DNSHeader struct from bytes
 func (head *DNSHeader) Decode(data []byte) {
 	head.ID = binary.BigEndian.Uint16(data[:2])
 	head.Opcode = DNSOpCode(data[2]>>3) & 0x0F
@@ -296,6 +303,7 @@ func (head *DNSHeader) Decode(data []byte) {
 	head.ARCount = binary.BigEndian.Uint16(data[10:12])
 }
 
+// Encode DNSHeader struct into binary representation for transport
 func (head *DNSHeader) Encode(bytes []byte, offset int) int {
 
 	binary.BigEndian.PutUint16(bytes, head.ID)
@@ -314,6 +322,7 @@ func (head *DNSHeader) computeSize() int {
 	return 12
 }
 
+// DNS struct represents the whole DNS datagram as per RFC 1034 - RFC 1035 specifications.
 type DNS struct {
 	DNSHeader
 
@@ -327,6 +336,7 @@ type DNS struct {
 	Additionals []byte
 }
 
+// Decode DNS struct from bytes
 func (d *DNS) Decode(data []byte) error {
 
 	if len(data) < 12 {
@@ -371,6 +381,7 @@ func (d *DNS) Decode(data []byte) error {
 	return nil
 }
 
+// Serialize a DNS struct into binary data for transport.
 func (d *DNS) Serialize() []byte {
 	dgSize := d.DNSHeader.computeSize()
 
@@ -406,13 +417,16 @@ func (d *DNS) Serialize() []byte {
 	return bytes
 }
 
+// ReplyTo DNS request with resource records.
+// This function will create a new DNS message with the specified
+// rr (Resource Records) in the answer section.
 func (d *DNS) ReplyTo(rr []DNSResourceRecord) *DNS {
 
 	reply := &DNS{}
 	reply.ID = d.ID
 	reply.Opcode = d.Opcode
 
-	reply.QR = true
+	reply.QR = true // is answer
 	reply.AA = d.AA
 	reply.TC = d.TC
 	reply.RD = d.RD
@@ -432,6 +446,7 @@ func (d *DNS) ReplyTo(rr []DNSResourceRecord) *DNS {
 	return reply
 }
 
+// String representation of the DNS struct
 func (d *DNS) String() string {
 	var buf bytes.Buffer
 
