@@ -20,6 +20,7 @@ func (store *DNSLocalStore) FromFile(path string) error {
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 
 	scan := bufio.NewScanner(file)
 	for scan.Scan() {
@@ -64,15 +65,24 @@ func (rr *DNSResolver) Resolve(req []byte) ([]byte, error) {
 	var reply []byte
 	for _, q := range dnsReq.Questions {
 		if resolved, ok := rr.Records[string(q.Name)]; ok {
-			an := DNSResourceRecord{}
-			an.Name = q.Name
-			an.Type = DNSTypeA
-			an.Class = DNSClassIN
-			an.IP = net.ParseIP(resolved)
-			an.TTL = defaultAnswerTTL
-			reply = dnsReq.ReplyTo(an).Serialize()
+			var answers []DNSResourceRecord
+			switch resolved {
+			default:
+				an := DNSResourceRecord{}
+				an.Name = q.Name
+				an.Type = DNSTypeA
+				an.Class = DNSClassIN
+				an.IP = net.ParseIP(resolved)
+				an.TTL = defaultAnswerTTL
+				answers = []DNSResourceRecord{an}
+			case "BLOCK":
+				answers = []DNSResourceRecord{}
+			}
+
+			reply = dnsReq.ReplyTo(answers).Serialize()
 		}
 	}
+
 	if reply == nil && rr.Fwd != nil {
 		reply, err = rr.Fwd.Forward(req)
 		if err != nil {

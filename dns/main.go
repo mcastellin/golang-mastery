@@ -1,30 +1,28 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mcastellin/golang-mastery/dns/pkg/dns"
 )
 
 var upstreamResolverAddr = "8.8.8.8:53"
 
-const docstring = `DNS playground
+var dnsServePort = 53
+
+var docstring = fmt.Sprintf(`DNS playground
 WARN: THIS IS NOT A PRODUCTION GRADE APPLICATION!
 
 To test DNS lookup use the following command and should resolve 127.0.0.0:
 > dig @localhost blog.acme.com
 
-serving UDP requests at port 53...`
+serving UDP requests at port %d...`, dnsServePort)
 
 func main() {
-
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 53})
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
-
 	store := dns.DNSLocalStore{}
 	if err := store.FromFile("dns-records.txt"); err != nil {
 		panic(err)
@@ -35,23 +33,11 @@ func main() {
 		Records: store,
 	}
 
+	srv := &DNSServer{Port: dnsServePort, Resolver: resolver}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	fmt.Println(docstring)
-
-	for {
-		var buf [dns.MaxDNSDatagramSize]byte
-		n, addr, err := conn.ReadFromUDP(buf[0:])
-		if err != nil {
-			panic(err)
-		}
-		data := buf[:n]
-
-		var reply []byte
-		if reply, err = resolver.Resolve(data); err != nil {
-			panic(err)
-		}
-
-		if _, err := conn.WriteToUDP(reply, addr); err != nil {
-			panic(err)
-		}
-	}
+	srv.Serve(ctx)
 }

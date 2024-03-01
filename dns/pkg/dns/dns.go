@@ -357,7 +357,7 @@ func (d *DNS) Serialize() []byte {
 	return bytes
 }
 
-func (d *DNS) ReplyTo(rr DNSResourceRecord) *DNS {
+func (d *DNS) ReplyTo(rr []DNSResourceRecord) *DNS {
 
 	reply := &DNS{}
 	reply.ID = d.ID
@@ -372,12 +372,12 @@ func (d *DNS) ReplyTo(rr DNSResourceRecord) *DNS {
 
 	reply.ResponseCode = d.ResponseCode
 	reply.QDCount = d.QDCount
-	reply.ANCount = 1
+	reply.ANCount = uint16(len(rr))
 	reply.NSCount = d.NSCount
 	reply.ARCount = d.ARCount
 
 	reply.Questions = d.Questions
-	reply.Answers = append(reply.Answers, rr)
+	reply.Answers = append(reply.Answers, rr...)
 	reply.Authorities = d.Authorities
 	reply.Additionals = d.Additionals
 	return reply
