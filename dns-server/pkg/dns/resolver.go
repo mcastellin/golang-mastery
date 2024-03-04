@@ -3,6 +3,7 @@ package dns
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -44,7 +45,12 @@ func (store *DNSLocalStore) FromFile(path string) error {
 	}
 	defer file.Close()
 
-	scan := bufio.NewScanner(file)
+	store.handleFromFile(file)
+	return nil
+}
+
+func (store *DNSLocalStore) handleFromFile(reader io.Reader) error {
+	scan := bufio.NewScanner(reader)
 	for scan.Scan() {
 		line := scan.Text()
 		strings.Trim(line, " ")

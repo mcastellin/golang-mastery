@@ -445,7 +445,7 @@ func (d *DNS) ReplyTo(rr []DNSResourceRecord) *DNS {
 	reply.TC = d.TC
 	reply.RD = d.RD
 	reply.RA = true // recursion available
-	reply.Z = d.Z
+	reply.Z = 0x0
 
 	reply.ResponseCode = d.ResponseCode
 	reply.QDCount = d.QDCount
