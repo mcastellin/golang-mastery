@@ -1,8 +1,0 @@
-; This file contains a list of DNS records that will be loaded into our
-; DNS server's local store
-
-acme.com.           127.0.0.1
-blog.acme.com.      127.0.0.1
-
-; blocked domains
-mask.icloud.com.    BLOCK

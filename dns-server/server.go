@@ -5,19 +5,23 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/mcastellin/golang-mastery/dns/pkg/dns"
+	"github.com/mcastellin/golang-mastery/dns-server/pkg/dns"
 )
 
+// Resolver is the interface implemented by DNS resolvers
 type Resolver interface {
 	Resolve([]byte) ([]byte, error)
 }
 
+// DNSServer is a web server implementation that can handle DNS requests via UDP.
 type DNSServer struct {
 	Port     int
 	Resolver Resolver
 	shutdown bool
 }
 
+// Serve UDP requests and block current program execution flow until the context
+// ctx is completed or cancelled.
 func (srv *DNSServer) Serve(ctx context.Context) {
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: srv.Port})
 	if err != nil {
@@ -28,6 +32,9 @@ func (srv *DNSServer) Serve(ctx context.Context) {
 	srv.serveLoop(ctx, conn)
 }
 
+// serveLoop implements an internal loop to serve UDP requests.
+// To remain responsive to context cancellation, the loop can accept and serve
+// requests in separate goroutines, see implementation for additional details.
 func (srv *DNSServer) serveLoop(ctx context.Context, conn *net.UDPConn) {
 	srv.shutdown = false
 	accepting := make(chan struct{}, 1)
@@ -112,6 +119,8 @@ func (srv *DNSServer) serveLoop(ctx context.Context, conn *net.UDPConn) {
 	}
 }
 
+// handleErr is responsible for handling internal errors while serving DNS requests.
+// The function returns a bool that indicates whether the error is recoverable.
 func (srv *DNSServer) handleErr(err error) bool {
 	if !srv.shutdown {
 		fmt.Println(err)

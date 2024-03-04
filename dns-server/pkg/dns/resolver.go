@@ -11,10 +11,32 @@ import (
 
 const defaultDialTimeout = 5 * time.Second
 const defaultAnswerTTL = 300
+
+// MaxDNSDatagramSize represent the maximum size of DNS packets this
+// application will accept.
 const MaxDNSDatagramSize = 512
 
+// DNSLocalStore is a minimal key-value datastore implementation
+// to store local DNS record information.
+//
+// The keys in this datastore are the FQDNs and values are the
+// associated IP addresses. It is also possible to use `BLOCK` as
+// the resolved value for a fully qualified domain name to return
+// an empty response for queries on certain domains.
 type DNSLocalStore map[string]string
 
+// FromFile loads the datastore initial state from a file.
+//
+// The datastore file contains one key-value pair per line that represent
+// DNS A records:
+//
+// ; my records
+// example.com.        10.0.0.3
+// test.example.com.   10.0.0.2
+// ; end my records
+//
+// Lines that start with a `;` character are interpreted as comments and
+// blank lines are ignored.
 func (store *DNSLocalStore) FromFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -49,11 +71,14 @@ func parseLine(line string) (string, string, error) {
 	return k, v, nil
 }
 
+// DNSResolver replies to DNS queries by either finding matching A records
+// in the local storage or forwarding requests to upstream servers.
 type DNSResolver struct {
 	Fwd     Forwarder
 	Records DNSLocalStore
 }
 
+// Resolve DNS answers for the incoming request.
 func (rr *DNSResolver) Resolve(req []byte) ([]byte, error) {
 	var err error
 	dnsReq := &DNS{}
@@ -97,19 +122,23 @@ func (rr *DNSResolver) Resolve(req []byte) ([]byte, error) {
 	return empty, nil
 }
 
+// Forwarder is the interface implemented by DNS request forwarders.
 type Forwarder interface {
 	Forward(req []byte) ([]byte, error)
 }
 
+// DNSForwarder implements logic to forward raw DNS requests to upstream
+// DNS servers when recursion is requested.
 type DNSForwarder struct {
-	Upstream string
-	Timeout  time.Duration
+	Upstream    string
+	DialTimeout time.Duration
 }
 
+// Forward the raw DNS request to upstream server.
 func (ff *DNSForwarder) Forward(req []byte) ([]byte, error) {
 	timeout := defaultDialTimeout
-	if ff.Timeout != 0 {
-		timeout = ff.Timeout
+	if ff.DialTimeout != 0 {
+		timeout = ff.DialTimeout
 	}
 
 	var err error

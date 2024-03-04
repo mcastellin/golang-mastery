@@ -1,4 +1,4 @@
-// Package gossip package contains a toy implementation of the gossip protocol to maintain
+// Package gossip contains a toy implementation of the gossip protocol to maintain
 // cluster membership information of a set of distributed nodes.
 package gossip
 

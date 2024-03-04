@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mcastellin/golang-mastery/dns/pkg/dns"
+	"github.com/mcastellin/golang-mastery/dns-server/pkg/dns"
 )
 
 var upstreamResolverAddr = "8.8.8.8:53"
