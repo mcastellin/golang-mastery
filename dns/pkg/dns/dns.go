@@ -98,24 +98,28 @@ func (q *DNSQuestion) Decode(data []byte, offset int) (int, error) {
 	}
 
 	var err error
-	if q.Name, offset, err = decodeName(data, offset); err != nil {
+	var nameOff int
+	q.Name, nameOff, err = decodeName(data, offset)
+	if err != nil {
 		return 0, err
 	}
 
-	q.Type = DNSType(binary.BigEndian.Uint16(data[offset : offset+2]))
-	q.Class = DNSClass(binary.BigEndian.Uint16(data[offset+2 : offset+4]))
+	roff := nameOff + offset
+	q.Type = DNSType(unpackUint16(data, roff))
+	q.Class = DNSClass(unpackUint16(data, roff+2))
 
-	return offset + 4, nil
+	return nameOff + 4, nil
 }
 
 // Encode binary data from a DNSQuestion struct
 func (q *DNSQuestion) Encode(bytes []byte, offset int) int {
+	nameOff := encodeName(q.Name, bytes, offset)
 
-	offset = encodeName(q.Name, bytes, offset)
-	binary.BigEndian.PutUint16(bytes[offset:], uint16(q.Type))
-	binary.BigEndian.PutUint16(bytes[offset+2:], uint16(q.Class))
+	roff := nameOff + offset
+	packUint16(bytes, roff, uint16(q.Type))
+	packUint16(bytes, roff+2, uint16(q.Class))
 
-	return offset + 4
+	return nameOff + 4
 }
 
 func (q *DNSQuestion) computeSize() int {
@@ -179,21 +183,25 @@ type DNSResourceRecord struct {
 func (r *DNSResourceRecord) Decode(data []byte, offset int) (int, error) {
 
 	var err error
-	if r.Name, offset, err = decodeName(data, offset); err != nil {
+	var nameOff int
+	r.Name, nameOff, err = decodeName(data, offset)
+	if err != nil {
 		return 0, err
 	}
-	r.Type = DNSType(binary.BigEndian.Uint16(data[offset : offset+2]))
-	r.Class = DNSClass(binary.BigEndian.Uint16(data[offset+2 : offset+4]))
-	r.TTL = binary.BigEndian.Uint32(data[offset+4 : offset+8])
-	r.RDLenght = binary.BigEndian.Uint16(data[offset+8 : offset+10])
+	roff := nameOff + offset
 
-	rdEnd := offset + 10 + int(r.RDLenght)
-	r.RData = data[offset+10 : rdEnd]
+	r.Type = DNSType(unpackUint16(data, roff))
+	r.Class = DNSClass(unpackUint16(data, roff+2))
+	r.TTL = unpackUint32(data, roff+4)
+	r.RDLenght = unpackUint16(data, roff+8)
+
+	rdEnd := roff + 10 + int(r.RDLenght)
+	r.RData = data[roff+10 : rdEnd]
 	if err := r.decodeRData(); err != nil {
 		return 0, err
 	}
 
-	return offset + 10 + int(r.RDLenght), nil
+	return nameOff + 10 + int(r.RDLenght), nil
 }
 
 // decodeRData into struct properties
@@ -221,23 +229,24 @@ func (r *DNSResourceRecord) computeSize() int {
 
 // Encode DNSResourceRecord struct into binary data for transport
 func (r *DNSResourceRecord) Encode(bytes []byte, offset int) int {
-	offset = encodeName(r.Name, bytes, offset)
+	nameOff := encodeName(r.Name, bytes, offset)
+	roff := nameOff + offset
 
-	binary.BigEndian.PutUint16(bytes[offset:], uint16(r.Type))
-	binary.BigEndian.PutUint16(bytes[offset+2:], uint16(r.Class))
-	binary.BigEndian.PutUint32(bytes[offset+4:], r.TTL)
+	packUint16(bytes, roff, uint16(r.Type))
+	packUint16(bytes, roff+2, uint16(r.Class))
+	packUint32(bytes, roff+4, r.TTL)
 
 	switch r.Type {
 	case DNSTypeA:
-		copy(bytes[offset+10:], r.IP.To4())
+		copy(bytes[roff+10:], r.IP.To4())
 		r.RDLenght = uint16(4)
-		binary.BigEndian.PutUint16(bytes[offset+8:], r.RDLenght)
-		return offset + 10 + 4
+		packUint16(bytes, roff+8, r.RDLenght)
+		return nameOff + 10 + 4
 	default:
 		// For the purpose of this project we only encode RData for A records
 		r.RDLenght = uint16(0)
-		binary.BigEndian.PutUint16(bytes[offset+8:], r.RDLenght)
-		return offset + 10
+		packUint16(bytes, roff+8, r.RDLenght)
+		return nameOff + 10
 	}
 }
 
@@ -286,8 +295,8 @@ type DNSHeader struct {
 }
 
 // Decode DNSHeader struct from bytes
-func (head *DNSHeader) Decode(data []byte) {
-	head.ID = binary.BigEndian.Uint16(data[:2])
+func (head *DNSHeader) Decode(data []byte) int {
+	head.ID = unpackUint16(data, 0)
 	head.Opcode = DNSOpCode(data[2]>>3) & 0x0F
 	head.QR = data[2]&0x80 != 0
 	head.AA = data[2]&0x04 != 0
@@ -297,23 +306,25 @@ func (head *DNSHeader) Decode(data []byte) {
 	head.Z = uint8(data[3]>>4) & 0x7
 
 	head.ResponseCode = DNSResponseCode(data[3]) & 0x0F
-	head.QDCount = binary.BigEndian.Uint16(data[4:6])
-	head.ANCount = binary.BigEndian.Uint16(data[6:8])
-	head.NSCount = binary.BigEndian.Uint16(data[8:10])
-	head.ARCount = binary.BigEndian.Uint16(data[10:12])
+	head.QDCount = unpackUint16(data, 4)
+	head.ANCount = unpackUint16(data, 6)
+	head.NSCount = unpackUint16(data, 8)
+	head.ARCount = unpackUint16(data, 10)
+
+	return 12
 }
 
 // Encode DNSHeader struct into binary representation for transport
 func (head *DNSHeader) Encode(bytes []byte, offset int) int {
 
-	binary.BigEndian.PutUint16(bytes, head.ID)
+	packUint16(bytes, 0, head.ID)
 	bytes[2] = b2i(head.QR)<<7 | uint8(head.Opcode<<3) | b2i(head.AA)<<2 | b2i(head.TC)<<1 | b2i(head.RD)
 	bytes[3] = b2i(head.RA)<<7 | head.Z<<4 | byte(head.ResponseCode)
 
-	binary.BigEndian.PutUint16(bytes[4:], head.QDCount)
-	binary.BigEndian.PutUint16(bytes[6:], head.ANCount)
-	binary.BigEndian.PutUint16(bytes[8:], head.NSCount)
-	binary.BigEndian.PutUint16(bytes[10:], head.ARCount)
+	packUint16(bytes, 4, head.QDCount)
+	packUint16(bytes, 6, head.ANCount)
+	packUint16(bytes, 8, head.NSCount)
+	packUint16(bytes, 10, head.ARCount)
 
 	return 12
 }
@@ -343,16 +354,16 @@ func (d *DNS) Decode(data []byte) error {
 		return errDNSPacketTooShort
 	}
 
-	d.DNSHeader.Decode(data)
+	offset := d.DNSHeader.Decode(data)
 
 	d.Questions = d.Questions[:0]
-	offset := 12
 	for i := 0; i < int(d.QDCount); i++ {
 		var q DNSQuestion
-		var err error
-		if offset, err = q.Decode(data, offset); err != nil {
+		qoff, err := q.Decode(data, offset)
+		if err != nil {
 			return err
 		}
+		offset += qoff
 		d.Questions = append(d.Questions, q)
 	}
 
@@ -360,19 +371,22 @@ func (d *DNS) Decode(data []byte) error {
 	for i := 0; i < int(d.ANCount); i++ {
 		var answer DNSResourceRecord
 		var err error
-		if offset, err = answer.Decode(data, offset); err != nil {
+		roff, err := answer.Decode(data, offset)
+		if err != nil {
 			return err
 		}
+		offset += roff
 		d.Answers = append(d.Answers, answer)
 	}
 
 	d.Authorities = d.Authorities[:0]
 	for i := 0; i < int(d.NSCount); i++ {
 		var auth DNSResourceRecord
-		var err error
-		if offset, err = auth.Decode(data, offset); err != nil {
+		roff, err := auth.Decode(data, offset)
+		if err != nil {
 			return err
 		}
+		offset += roff
 		d.Authorities = append(d.Authorities, auth)
 	}
 
@@ -402,14 +416,14 @@ func (d *DNS) Serialize() []byte {
 	offset := d.DNSHeader.Encode(bytes, 0)
 
 	for _, q := range d.Questions {
-		offset = q.Encode(bytes, offset)
+		offset += q.Encode(bytes, offset)
 	}
 
 	for _, an := range d.Answers {
-		offset = an.Encode(bytes, offset)
+		offset += an.Encode(bytes, offset)
 	}
 	for _, ns := range d.Authorities {
-		offset = ns.Encode(bytes, offset)
+		offset += ns.Encode(bytes, offset)
 	}
 
 	copy(bytes[offset:], d.Additionals)
@@ -430,7 +444,7 @@ func (d *DNS) ReplyTo(rr []DNSResourceRecord) *DNS {
 	reply.AA = d.AA
 	reply.TC = d.TC
 	reply.RD = d.RD
-	reply.RA = d.RA
+	reply.RA = true // recursion available
 	reply.Z = d.Z
 
 	reply.ResponseCode = d.ResponseCode
@@ -480,42 +494,47 @@ func (d *DNS) String() string {
 	return buf.String()
 }
 
+// decodeName decodes the dns record name from transport bytes and returns
+// the number of bytes consumed.
 func decodeName(data []byte, offset int) ([]byte, int, error) {
+	readOff := offset
 	var name []byte
 	for {
-		switch data[offset] & 0xc0 {
+		switch data[readOff] & 0xc0 {
 		default:
 			// labels
-			length := int(data[offset])
-			offset++
+			length := int(data[readOff])
+			readOff++
 			if length == 0 {
-				return name, offset, nil
+				return name, readOff - offset, nil
 			}
-			name = append(name, data[offset:offset+length]...)
+			name = append(name, data[readOff:readOff+length]...)
 			name = append(name, '.')
 
-			offset += length
+			readOff += length
 		case 0xc0:
 			// label pointer
-			ptr := binary.BigEndian.Uint16(data[offset:offset+2]) & 0x3fff
+			ptr := unpackUint16(data, readOff) & 0x3fff
 			label, _, err := decodeName(data, int(ptr))
 			if err != nil {
-				return nil, offset, err
+				return nil, 0, err
 			}
 			name = append(name, label...)
-			return name, offset + 2, nil
+			return name, readOff - offset + 2, nil
 		case 0x80:
-			return nil, offset, errReservedForFutureUse
+			return nil, 0, errReservedForFutureUse
 		case 0x40:
-			return nil, offset, errReservedForFutureUse
+			return nil, 0, errReservedForFutureUse
 		}
 	}
 }
 
+// encodeName encodes the dns record name as bytes and returns the number
+// of bytes added to the buffer.
 func encodeName(name []byte, bytes []byte, offset int) int {
 	if len(name) == 0 {
 		bytes[offset] = 0x00
-		return offset + 1
+		return 1
 	}
 
 	length := 0
@@ -530,7 +549,7 @@ func encodeName(name []byte, bytes []byte, offset int) int {
 	}
 
 	bytes[offset+len(name)+1] = 0x00
-	return offset + len(name) + 1
+	return len(name) + 1
 }
 
 // convert boolean value to bit representation
@@ -541,8 +560,41 @@ func b2i(v bool) byte {
 	return 0x0
 }
 
+// unpack uint16 variable from byte slice
+func unpackUint16(bytes []byte, offset int) uint16 {
+	if offset+2 > len(bytes) {
+		panic(errNotEnoughBytes)
+	}
+	return binary.BigEndian.Uint16(bytes[offset : offset+2])
+}
+
+// unpack uint32 variable from byte slice
+func unpackUint32(bytes []byte, offset int) uint32 {
+	if offset+4 > len(bytes) {
+		panic(errNotEnoughBytes)
+	}
+	return binary.BigEndian.Uint32(bytes[offset : offset+4])
+}
+
+// pack uint16 variable into byte slice
+func packUint16(bytes []byte, offset int, v uint16) {
+	if offset+2 > len(bytes) {
+		panic(errNotEnoughBytes)
+	}
+	binary.BigEndian.PutUint16(bytes[offset:], v)
+}
+
+// pack uint32 variable into byte slice
+func packUint32(bytes []byte, offset int, v uint32) {
+	if offset+4 > len(bytes) {
+		panic(errNotEnoughBytes)
+	}
+	binary.BigEndian.PutUint32(bytes[offset:], v)
+}
+
 var (
 	errNotImplemented       = errors.New("not implemented yet")
 	errDNSPacketTooShort    = errors.New("dns packet too short")
+	errNotEnoughBytes       = errors.New("not enough bytes to unpack")
 	errReservedForFutureUse = errors.New("reserved for future use")
 )

@@ -62,7 +62,6 @@ func (rr *DNSResolver) Resolve(req []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	var reply []byte
 	for _, q := range dnsReq.Questions {
 		if resolved, ok := rr.Records[string(q.Name)]; ok {
 			var answers []DNSResourceRecord
@@ -79,18 +78,23 @@ func (rr *DNSResolver) Resolve(req []byte) ([]byte, error) {
 				answers = []DNSResourceRecord{}
 			}
 
-			reply = dnsReq.ReplyTo(answers).Serialize()
+			reply := dnsReq.ReplyTo(answers).Serialize()
+			return reply, nil
 		}
 	}
 
-	if reply == nil && rr.Fwd != nil {
-		reply, err = rr.Fwd.Forward(req)
+	// If DNS recursion desired (RD) flag is set and forward server is available,
+	// proxy the DNS request.
+	if dnsReq.RD && rr.Fwd != nil {
+		reply, err := rr.Fwd.Forward(req)
 		if err != nil {
 			return nil, err
 		}
+		return reply, nil
 	}
 
-	return reply, nil
+	empty := dnsReq.ReplyTo([]DNSResourceRecord{}).Serialize()
+	return empty, nil
 }
 
 type Forwarder interface {
