@@ -48,10 +48,10 @@ func TestEventsHandling(t *testing.T) {
 	<-time.After(time.Second)
 
 	if emailSent != 1 {
-		t.Fatalf("Sould have received 1 email notification: got %d", emailSent)
+		t.Fatalf("should have received 1 email notification: got %d", emailSent)
 	}
 	if logLines != 1 {
-		t.Fatalf("Sould have received 1 logging notification: got %d", logLines)
+		t.Fatalf("should have received 1 logging notification: got %d", logLines)
 	}
 }
 
@@ -83,7 +83,7 @@ func TestBadSubscriber(t *testing.T) {
 	<-time.After(time.Second) // allow some time to finish processing events
 
 	if emailSent != int32(expectedNotifications) {
-		t.Fatalf("Sould have received %d email notification: got %d", expectedNotifications, emailSent)
+		t.Fatalf("should have received %d email notification: got %d", expectedNotifications, emailSent)
 	}
 }
 

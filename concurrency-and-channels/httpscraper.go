@@ -26,7 +26,7 @@ func defaultRequestDoer() requestDoer {
 
 // httpWorker handles scraping request submitted to the reqCh channel.
 //
-// This function allows task cancellation with graceful tremination of in-flight requests
+// This function allows task cancellation with graceful termination of in-flight requests
 // using the sigExit channel.
 func httpWorker(wg *sync.WaitGroup, reqDoer requestDoer, handler scrapeResponseHandler,
 	reqCh <-chan http.Request, sigExit <-chan struct{}, postFn func()) {

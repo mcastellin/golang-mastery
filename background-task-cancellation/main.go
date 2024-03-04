@@ -7,7 +7,7 @@ import (
 )
 
 // An example type that represents a long-running uninterruptible operation
-// like a complex computation, a database transation or HTTP interaction
+// like a complex computation, a database transaction or HTTP interaction
 type mockComplexOp struct {
 	Duration time.Duration
 	timer    *time.Timer
