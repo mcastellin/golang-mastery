@@ -20,6 +20,7 @@ Here's a list of the projects I've been working on. In you're interested in any 
         - implementation of the [Gossip protocol](https://en.wikipedia.org/wiki/Gossip_protocol) to maintain cluster membership information for distributed applications
 - [x] [dns-server](/dns-server/)
         - implementation of a toy DNS server capable of serving DNS requests from A-type records stored locally or forwarding requests to authoritative servers upstream
+- [ ] [distributed-queue](/distributed-queue/)
 
 
 ## Future project ideas
