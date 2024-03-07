@@ -5,8 +5,6 @@ import (
 	"fmt"
 )
 
-type shardBins map[int]int
-
 type ShardMeta struct {
 	Id         uint32
 	ConnString string

@@ -27,7 +27,7 @@ func main() {
 		os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	buf := make(chan EnqueueRequest, 100)
+	buf := make(chan EnqueueRequest, 500)
 
 	mgr := &ShardManager{}
 	for _, c := range shardConfs {
@@ -51,10 +51,14 @@ func main() {
 	}
 	fmt.Println("Version", version)
 
+	dequeueBuf := &PriorityBuffer{}
+	dequeueBuf.Serve()
+
 	hh := &Handler{
 		ShardMgr:      mgr,
 		MainShard:     mgr.Master(),
 		EnqueueBuffer: buf,
+		DequeueBuffer: dequeueBuf,
 	}
 	api := &APIService{Handler: hh}
 	if err := api.Serve(ctx); err != nil {

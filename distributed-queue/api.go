@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,8 +11,9 @@ import (
 
 type H map[string]any
 
-func jsonResponse(w http.ResponseWriter, v H) error {
+func jsonResponse(w http.ResponseWriter, statusCode int, v H) error {
 	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
 	err := json.NewEncoder(w).Encode(v)
 	return err
 }
@@ -28,6 +28,7 @@ func (s *APIService) Serve(ctx context.Context) error {
 	mux.HandleFunc("/queue", s.Handler.getQueuesHandler)
 	mux.HandleFunc("/queue/create", s.Handler.createQueueHandler)
 	mux.HandleFunc("/enqueue", s.Handler.enqueueHandler)
+	mux.HandleFunc("/dequeue", s.Handler.dequeueHandler)
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -51,6 +52,7 @@ type Handler struct {
 	ShardMgr      *ShardManager
 	MainShard     *ShardMeta
 	EnqueueBuffer chan EnqueueRequest
+	DequeueBuffer *PriorityBuffer
 }
 
 func (hh *Handler) getQueuesHandler(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +67,7 @@ func (hh *Handler) getQueuesHandler(w http.ResponseWriter, r *http.Request) {
 	for _, r := range results {
 		queues = append(queues, H{"queueId": r.Id.String(), "name": r.Name})
 	}
-	jsonResponse(w, H{"queues": queues})
+	jsonResponse(w, http.StatusOK, H{"queues": queues})
 }
 
 type CreateQueueRequest struct {
@@ -86,7 +88,7 @@ func (hh *Handler) createQueueHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = jsonResponse(w, H{
+	err = jsonResponse(w, http.StatusOK, H{
 		"queueId": item.Id.String(),
 		"name":    item.Name,
 	})
@@ -115,18 +117,21 @@ func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 
 	quid, err := ParseUUID(req.QueueID)
 	if err != nil {
-		jsonResponse(w, H{"error": "invalid queue id"})
+		jsonResponse(w, http.StatusNotFound, H{"error": "invalid queue id"})
 		return
 	}
 	q := &Queue{Id: *quid}
-	err = q.Get(hh.MainShard)
-	if errors.Is(err, sql.ErrNoRows) {
-		jsonResponse(w, H{"error": "invalid queue"})
-		return
-	} else if err != nil {
-		jsonResponse(w, H{"error": err.Error()})
-		return
-	}
+	// TODO need to replicate this in every shard to maintain performance
+	// for now just disabling queue verification
+	//
+	//err = q.Get(hh.MainShard)
+	//if errors.Is(err, sql.ErrNoRows) {
+	//jsonResponse(w, H{"error": "invalid queue"})
+	//return
+	//} else if err != nil {
+	//jsonResponse(w, H{"error": err.Error()})
+	//return
+	//}
 
 	msg := Message{
 		Queue:        q,
@@ -158,10 +163,27 @@ func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(resp.Err.Error()))
 			return
 		}
-		jsonResponse(w, H{
+		jsonResponse(w, http.StatusCreated, H{
 			"status": "created",
 			"msgId":  resp.MsgId.String(),
 		})
 	}
 
+}
+
+func (hh *Handler) dequeueHandler(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		// TODO
+
+		req := &DequeueRequest{}
+		resp := <-hh.DequeueBuffer.Dequeue(req)
+		fmt.Println(resp)
+	case http.MethodPost:
+	// TODO
+	default:
+		jsonResponse(w, http.StatusBadRequest, H{
+			"status": "bad request",
+		})
+	}
 }
