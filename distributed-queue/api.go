@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type H map[string]any
@@ -51,20 +49,21 @@ func (s *APIService) Serve(ctx context.Context) error {
 
 type Handler struct {
 	ShardMgr      *ShardManager
+	MainShard     *ShardMeta
 	EnqueueBuffer chan EnqueueRequest
 }
 
 func (hh *Handler) getQueuesHandler(w http.ResponseWriter, r *http.Request) {
 
-	results, err := SearchQueues(hh.ShardMgr)
+	results, err := SearchQueues(hh.MainShard)
 	if err != nil {
-		w.Write([]byte("error"))
+		w.Write([]byte(err.Error()))
 		return
 	}
 
 	var queues []H
 	for _, r := range results {
-		queues = append(queues, H{"queueId": r.ID, "name": r.Name})
+		queues = append(queues, H{"queueId": r.Id.String(), "name": r.Name})
 	}
 	jsonResponse(w, H{"queues": queues})
 }
@@ -76,29 +75,29 @@ type CreateQueueRequest struct {
 func (hh *Handler) createQueueHandler(w http.ResponseWriter, r *http.Request) {
 	var req CreateQueueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Write([]byte("error"))
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	item := Queue{ID: uuid.New(), Name: req.Name}
-	err := item.Create(hh.ShardMgr)
+	item := Queue{Name: req.Name}
+	err := item.Create(hh.MainShard)
 	if err != nil {
-		w.Write([]byte("error"))
+		w.Write([]byte(err.Error()))
 		return
 	}
 
 	err = jsonResponse(w, H{
-		"queueId": item.ID,
+		"queueId": item.Id.String(),
 		"name":    item.Name,
 	})
 	if err != nil {
-		w.Write([]byte("error"))
+		w.Write([]byte(err.Error()))
 		return
 	}
 }
 
 type EnqueueReq struct {
-	QueueID      uuid.UUID     `json:"queueId"`
+	QueueID      string        `json:"queueId"`
 	Topic        string        `json:"topic"`
 	Priority     uint32        `json:"priority"`
 	Payload      string        `json:"payload"`
@@ -110,14 +109,22 @@ type EnqueueReq struct {
 func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 	var req EnqueueReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Write([]byte("error"))
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	q := &Queue{ID: req.QueueID}
-	err := q.Get(hh.ShardMgr)
+	quid, err := ParseUUID(req.QueueID)
+	if err != nil {
+		jsonResponse(w, H{"error": "invalid queue id"})
+		return
+	}
+	q := &Queue{Id: *quid}
+	err = q.Get(hh.MainShard)
 	if errors.Is(err, sql.ErrNoRows) {
 		jsonResponse(w, H{"error": "invalid queue"})
+		return
+	} else if err != nil {
+		jsonResponse(w, H{"error": err.Error()})
 		return
 	}
 
@@ -148,12 +155,12 @@ func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 	case resp := <-respCh:
 		if resp.Err != nil {
 			fmt.Println(resp.Err)
-			w.Write([]byte("error"))
+			w.Write([]byte(resp.Err.Error()))
 			return
 		}
 		jsonResponse(w, H{
 			"status": "created",
-			"msgId":  resp.MsgId,
+			"msgId":  resp.MsgId.String(),
 		})
 	}
 

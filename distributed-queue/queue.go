@@ -1,17 +1,13 @@
 package main
 
-import (
-	"github.com/google/uuid"
-)
-
 type EnqueueResponse struct {
-	MsgId uuid.UUID
+	MsgId UUID
 	Err   error
 }
 
 type EnqueueRequest struct {
 	Msg    Message
-	RespCh chan EnqueueResponse
+	RespCh chan<- EnqueueResponse
 }
 
 type EnqueueWorker struct {

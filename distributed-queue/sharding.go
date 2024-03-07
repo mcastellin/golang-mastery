@@ -7,52 +7,70 @@ import (
 
 type shardBins map[int]int
 
-type ShardHasher interface {
-	Hashed() int
-}
-
 type ShardMeta struct {
-	Name       string
+	Id         uint32
 	ConnString string
 
-	conn *sql.DB
+	conn   *sql.DB
+	master bool
 }
 
 func (meta *ShardMeta) Conn() *sql.DB {
 	return meta.conn
 }
 
-type ShardManager struct {
-	shards []*ShardMeta
+func (m *ShardMeta) initialize() error {
+
+	// TODO store shard information in a table
+	return nil
 }
 
-func (m *ShardManager) Add(shardName string, connString string) (*ShardMeta, error) {
+type ShardManager struct {
+	shards []*ShardMeta
+	index  map[uint32]*ShardMeta
+}
+
+func (m *ShardManager) Add(shardId uint32, master bool, connString string) (*ShardMeta, error) {
 	dbConn, err := sql.Open("postgres", connString)
 	if err != nil {
 		return nil, err
 	}
 
 	meta := &ShardMeta{
-		Name:       shardName,
+		Id:         shardId,
 		ConnString: connString,
 		conn:       dbConn,
+		master:     master,
+	}
+	if err := meta.initialize(); err != nil {
+		meta.conn.Close() // bad shard initialization: closing
+		return nil, err
 	}
 	m.shards = append(m.shards, meta)
+
+	if m.index == nil {
+		m.index = map[uint32]*ShardMeta{}
+	}
+	m.index[meta.Id] = meta
 
 	return meta, nil
 }
 
-func (m *ShardManager) Connect(v ShardHasher) (*ShardMeta, error) {
-	idx := m.calculateBin(v)
-	return m.shards[idx], nil
+func (m *ShardManager) Shards() []*ShardMeta {
+	return m.shards
 }
 
-func (m *ShardManager) calculateBin(v ShardHasher) int {
-	hash := 0
-	if v != nil {
-		hash = v.Hashed()
+func (m *ShardManager) Get(id uint32) *ShardMeta {
+	return m.index[id]
+}
+
+func (m *ShardManager) Master() *ShardMeta {
+	for _, m := range m.shards {
+		if m.master {
+			return m
+		}
 	}
-	return int(hash % len(m.shards))
+	return nil
 }
 
 func (m *ShardManager) Close() {

@@ -1,60 +1,35 @@
 package main
 
 import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/rs/xid"
 )
 
-type ShardConnector interface {
-	Connect(ShardHasher) (*ShardMeta, error)
-}
-
 type Queue struct {
-	ID   uuid.UUID
+	Id   UUID
 	Name string
 }
 
-func (q *Queue) CreateTable(c ShardConnector) error {
-	statement := `CREATE TABLE IF NOT EXISTS queues (
-		Id UUID PRIMARY KEY,
-		Name VARCHAR(50)
-	)`
-
-	shard, err := c.Connect(q)
-	if err != nil {
-		return err
-	}
-
-	_, err = shard.Conn().Exec(statement)
-	return err
+func (q *Queue) Get(shard *ShardMeta) error {
+	statement := "SELECT Id, Name FROM queues WHERE Id = $1"
+	return shard.Conn().QueryRow(statement, q.Id.Bytes()).Scan(&q.Id, &q.Name)
 }
 
-func (q *Queue) Get(c ShardConnector) error {
-	statement := "SELECT Name FROM queues WHERE Id = $1;"
-	shard, err := c.Connect(q)
-	if err != nil {
-		return err
-	}
-	return shard.Conn().QueryRow(statement, q.ID).Scan(&q.Name)
+func (q *Queue) Create(shard *ShardMeta) error {
+	statement := "INSERT INTO queues (Id, Name) VALUES ($1, $2) RETURNING Id"
+
+	newUid := NewUUID(shard.Id)
+	return shard.Conn().QueryRow(statement, newUid.Bytes(), q.Name).Scan(&q.Id)
 }
 
-func (q *Queue) Create(c ShardConnector) error {
-	statement := "INSERT INTO queues (Id, Name) VALUES ($1, $2) RETURNING Id;"
-
-	shard, err := c.Connect(q)
-	if err != nil {
-		return err
-	}
-	return shard.Conn().QueryRow(statement, genUUID(), q.Name).Scan(&q.ID)
-}
-
-func SearchQueues(c ShardConnector) ([]Queue, error) {
-	statement := "SELECT Id, Name FROM queues;"
-	shard, err := c.Connect(nil)
-	if err != nil {
-		return nil, err
-	}
+func SearchQueues(shard *ShardMeta) ([]Queue, error) {
+	statement := "SELECT Id, Name FROM queues"
 
 	rows, err := shard.Conn().Query(statement)
 	if err != nil {
@@ -65,7 +40,7 @@ func SearchQueues(c ShardConnector) ([]Queue, error) {
 	var vals []Queue
 	for rows.Next() {
 		var v Queue
-		if err := rows.Scan(&v.ID, &v.Name); err != nil {
+		if err := rows.Scan(&v.Id, &v.Name); err != nil {
 			return nil, err
 		}
 		vals = append(vals, v)
@@ -74,12 +49,8 @@ func SearchQueues(c ShardConnector) ([]Queue, error) {
 	return vals, nil
 }
 
-func (q *Queue) Hashed() int {
-	return 0 // all in one shard for now
-}
-
 type Message struct {
-	Id           uuid.UUID
+	Id           UUID
 	Topic        string
 	Priority     uint32
 	Queue        *Queue
@@ -89,38 +60,20 @@ type Message struct {
 	TTL          time.Duration
 }
 
-func (msg *Message) CreateTable(c ShardConnector) error {
-	statement := `CREATE TABLE IF NOT EXISTS messages (
-		Id UUID PRIMARY KEY,
-		Topic VARCHAR(50),
-		Priority INTEGER,
-		QueueId UUID,
-		Payload BYTEA,
-		Metadata BYTEA,
-		DeliverAfter INTERVAL,
-		TTL INTERVAL
-	)`
-
-	shard, err := c.Connect(msg)
-	if err != nil {
-		return err
-	}
-	_, err = shard.Conn().Exec(statement)
-	return err
-}
-
 func (msg *Message) Create(shard *ShardMeta) error {
 	statement := `INSERT INTO messages (
 		Id, Topic, Priority, QueueId,
 		Payload, Metadata, DeliverAfter, TTL
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	RETURNING Id;`
+	RETURNING Id`
+
+	newUid := NewUUID(shard.Id)
 
 	return shard.Conn().QueryRow(statement,
-		genUUID(),
+		newUid.Bytes(),
 		msg.Topic,
 		msg.Priority,
-		msg.Queue.ID,
+		msg.Queue.Id.Bytes(),
 		msg.Payload,
 		msg.Metadata,
 		msg.DeliverAfter,
@@ -128,10 +81,69 @@ func (msg *Message) Create(shard *ShardMeta) error {
 	).Scan(&msg.Id)
 }
 
-func (msg *Message) Hashed() int {
-	return 0 // all in one shard for now
+type UUID [16]byte
+
+func (u *UUID) XID() xid.ID {
+	v, err := xid.FromBytes(u[4:])
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
-func genUUID() uuid.UUID {
-	return uuid.New()
+func (u *UUID) ShardId() uint32 {
+	return binary.BigEndian.Uint32(u[:4])
 }
+
+func (u *UUID) String() string {
+	return fmt.Sprintf("%d-%s", u.ShardId(), u.XID().String())
+}
+
+func (u *UUID) Scan(src interface{}) error {
+	switch src := src.(type) {
+	case []byte:
+		if len(src) != 16 {
+			return fmt.Errorf("invalid key length: %d", len(src))
+		}
+		copy(u[0:], src)
+		return nil
+	}
+	return nil
+}
+
+func (u *UUID) Bytes() []byte {
+	return u[0:]
+}
+
+func NewUUID(shardId uint32) UUID {
+	var uid UUID
+	binary.BigEndian.PutUint32(uid[:4], shardId)
+	copy(uid[4:], xid.New().Bytes())
+
+	return uid
+}
+
+func ParseUUID(v string) (*UUID, error) {
+	tokens := strings.Split(v, "-")
+	if len(tokens) != 2 {
+		return nil, ErrInvalidUUIDFormat
+	}
+
+	sid, err := strconv.Atoi(tokens[0])
+	if err != nil {
+		return nil, ErrInvalidUUIDFormat
+	}
+	xuid, err := xid.FromString(tokens[1])
+	if err != nil {
+		return nil, ErrInvalidUUIDFormat
+	}
+
+	var uid UUID
+	binary.BigEndian.PutUint32(uid[:4], uint32(sid))
+	copy(uid[4:], xuid.Bytes())
+	return &uid, nil
+}
+
+var (
+	ErrInvalidUUIDFormat = errors.New("invalid UUID format")
+)
