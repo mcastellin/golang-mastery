@@ -176,9 +176,9 @@ func (hh *Handler) dequeueHandler(w http.ResponseWriter, req *http.Request) {
 	case http.MethodGet:
 		// TODO
 
-		req := &DequeueRequest{}
+		req := &DequeueRequest{Topic: "test"}
 		resp := <-hh.DequeueBuffer.Dequeue(req)
-		fmt.Println(resp)
+		jsonResponse(w, http.StatusOK, H{"messages": resp.Messages})
 	case http.MethodPost:
 	// TODO
 	default:

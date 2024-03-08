@@ -38,10 +38,15 @@ func main() {
 	}
 	defer mgr.Close()
 
+	prefetchBuf := &PriorityBuffer{}
+	prefetchBuf.Serve()
 	for _, shard := range mgr.Shards() {
-		w := &EnqueueWorker{Shard: shard, Buffer: buf}
-		go w.Run()
-		defer w.Stop()
+		wEnqueue := &EnqueueWorker{Shard: shard, Buffer: buf}
+		wDequeue := &DequeueWorker{Shard: shard, PrefetchBuffer: prefetchBuf}
+		go wEnqueue.Run()
+		go wDequeue.Run()
+		defer wEnqueue.Stop()
+		defer wDequeue.Stop()
 	}
 
 	var version string
@@ -51,14 +56,11 @@ func main() {
 	}
 	fmt.Println("Version", version)
 
-	dequeueBuf := &PriorityBuffer{}
-	dequeueBuf.Serve()
-
 	hh := &Handler{
 		ShardMgr:      mgr,
 		MainShard:     mgr.Master(),
 		EnqueueBuffer: buf,
-		DequeueBuffer: dequeueBuf,
+		DequeueBuffer: prefetchBuf,
 	}
 	api := &APIService{Handler: hh}
 	if err := api.Serve(ctx); err != nil {
