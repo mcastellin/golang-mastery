@@ -1,9 +1,12 @@
 package main
 
 import (
-	"fmt"
+	"container/heap"
 	"time"
 )
+
+const maxPrefetchItemCount int = 20
+const defaultDequeueLimit int = 20
 
 type DequeueRequest struct {
 	Namespace string
@@ -20,30 +23,66 @@ type DequeueResponse struct {
 
 type PriorityBuffer struct {
 	apiReqCh chan DequeueRequest
-	readyCh  chan Message
+	ingestCh chan Message
+
+	// buffers contains one key per fetched topic.
+	// Every topic stores a pre-fetch heap with messages
+	// that are ready for delivery up to maxPrefetchItemCount
+	buffers map[string]*msgHeap
 }
 
 func (pb *PriorityBuffer) Serve() chan DequeueRequest {
-	pb.readyCh = make(chan Message, 300)
 	pb.apiReqCh = make(chan DequeueRequest, 300)
-	go pb.loop()
+	pb.ingestCh = make(chan Message, 300)
+	if pb.buffers == nil {
+		pb.buffers = map[string]*msgHeap{}
+	}
+
+	go pb.serveLoop()
+
 	return pb.apiReqCh
 }
 
-func (pb *PriorityBuffer) loop() {
+func (pb *PriorityBuffer) serveLoop() {
 	for {
 		select {
+		case msg := <-pb.ingestCh:
+			tHeap, ok := pb.buffers[msg.Topic]
+			if !ok {
+				newHeap := make(msgHeap, 0)
+				tHeap = &newHeap
+				heap.Init(tHeap)
+				pb.buffers[msg.Topic] = tHeap
+			}
 
-		// Handle dequeue requests from the API by returning items ready for delivery in the prefetch buffer
+			if len(*tHeap) < maxPrefetchItemCount {
+				heap.Push(tHeap, &msg)
+			}
+
 		case apiReq := <-pb.apiReqCh:
-			fmt.Println(apiReq)
-			apiReq.replyCh <- DequeueResponse{Messages: []Message{{Payload: []byte("asdlfkasdf")}}}
+			tHeap, ok := pb.buffers[apiReq.Topic]
+			if !ok {
+				apiReq.replyCh <- DequeueResponse{Messages: []Message{}}
+				continue
+			}
 
-		// Handle insertion of new messages into the buffer received from the dequeue workers
-		case msg := <-pb.readyCh:
-			fmt.Println(msg)
+			limit := apiReq.Limit
+			if limit == 0 {
+				limit = defaultDequeueLimit
+			}
+			n := min(len(*tHeap), limit)
+			prefetched := make([]Message, n)
+			for i := 0; i < n; i++ {
+				item := heap.Pop(tHeap).(*Message)
+				prefetched[i] = *item
+			}
+			apiReq.replyCh <- DequeueResponse{Messages: prefetched}
 		}
 	}
+}
+
+func (pb *PriorityBuffer) C() chan Message {
+	return pb.ingestCh
 }
 
 func (pb *PriorityBuffer) Dequeue(req *DequeueRequest) chan DequeueResponse {
@@ -53,4 +92,31 @@ func (pb *PriorityBuffer) Dequeue(req *DequeueRequest) chan DequeueResponse {
 	pb.apiReqCh <- *req
 
 	return respCh
+}
+
+type msgHeap []*Message
+
+func (mh msgHeap) Len() int {
+	return len(mh)
+}
+
+func (mh msgHeap) Less(i, j int) bool {
+	return mh[i].Priority < mh[j].Priority
+}
+
+func (mh msgHeap) Swap(i, j int) {
+	mh[i], mh[j] = mh[j], mh[i]
+}
+
+func (mh *msgHeap) Push(v any) {
+	item := v.(*Message)
+	*mh = append(*mh, item)
+}
+
+func (mh *msgHeap) Pop() any {
+	old := *mh
+	n := len(old)
+	item := old[n-1]
+	*mh = old[:n-1]
+	return item
 }
