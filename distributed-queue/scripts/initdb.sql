@@ -1,15 +1,18 @@
-CREATE TABLE IF NOT EXISTS queues (
-    Id BYTEA PRIMARY KEY,
-    Name VARCHAR(50)
+CREATE TABLE IF NOT EXISTS namespaces (
+    id BYTEA PRIMARY KEY,
+    name VARCHAR(50)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-    Id BYTEA PRIMARY KEY,
-    Topic VARCHAR(50) NOT NULL,
-    Priority INTEGER NOT NULL,
-    QueueId BYTEA NOT NULL,
-    Payload BYTEA NOT NULL,
-    Metadata BYTEA NOT NULL,
-    DeliverAfter INTERVAL NOT NULL,
-    TTL INTERVAL NOT NULL
+    id BYTEA PRIMARY KEY,
+    topic VARCHAR(50) NOT NULL,
+    priority INTEGER NOT NULL,
+    namespace BYTEA NOT NULL,
+    payload BYTEA NOT NULL,
+    metadata BYTEA NOT NULL,
+    deliverafter INTERVAL NOT NULL,
+    ttl INTERVAL NOT NULL,
+    readyat TIMESTAMP NOT NULL,
+    expiresat TIMESTAMP NOT NULL,
+    prefetched BOOLEAN DEFAULT false
 );

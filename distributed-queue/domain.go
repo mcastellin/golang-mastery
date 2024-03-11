@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -8,28 +9,29 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/rs/xid"
 )
 
-type Queue struct {
+type Namespace struct {
 	Id   UUID
 	Name string
 }
 
-func (q *Queue) Get(shard *ShardMeta) error {
-	statement := "SELECT Id, Name FROM queues WHERE Id = $1"
+func (q *Namespace) Get(shard *ShardMeta) error {
+	statement := "SELECT id, name FROM namespaces WHERE id = $1"
 	return shard.Conn().QueryRow(statement, q.Id.Bytes()).Scan(&q.Id, &q.Name)
 }
 
-func (q *Queue) Create(shard *ShardMeta) error {
-	statement := "INSERT INTO queues (Id, Name) VALUES ($1, $2) RETURNING Id"
+func (q *Namespace) Create(shard *ShardMeta) error {
+	statement := "INSERT INTO namespaces (id, name) VALUES ($1, $2) RETURNING id"
 
 	newUid := NewUUID(shard.Id)
 	return shard.Conn().QueryRow(statement, newUid.Bytes(), q.Name).Scan(&q.Id)
 }
 
-func SearchQueues(shard *ShardMeta) ([]Queue, error) {
-	statement := "SELECT Id, Name FROM queues"
+func SearchNamespaces(shard *ShardMeta) ([]Namespace, error) {
+	statement := "SELECT id, name FROM namespaces"
 
 	rows, err := shard.Conn().Query(statement)
 	if err != nil {
@@ -37,9 +39,9 @@ func SearchQueues(shard *ShardMeta) ([]Queue, error) {
 	}
 	defer rows.Close()
 
-	var vals []Queue
+	var vals []Namespace
 	for rows.Next() {
-		var v Queue
+		var v Namespace
 		if err := rows.Scan(&v.Id, &v.Name); err != nil {
 			return nil, err
 		}
@@ -53,7 +55,7 @@ type Message struct {
 	Id           UUID
 	Topic        string
 	Priority     uint32
-	Queue        *Queue
+	Namespace    *Namespace
 	Payload      []byte
 	Metadata     []byte
 	DeliverAfter time.Duration
@@ -62,10 +64,11 @@ type Message struct {
 
 func (msg *Message) Create(shard *ShardMeta) error {
 	statement := `INSERT INTO messages (
-		Id, Topic, Priority, QueueId,
-		Payload, Metadata, DeliverAfter, TTL
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	RETURNING Id`
+		id, topic, priority, namespace,
+		payload, metadata, deliverafter, ttl,
+		readyat, expiresat
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	RETURNING id`
 
 	newUid := NewUUID(shard.Id)
 
@@ -73,12 +76,72 @@ func (msg *Message) Create(shard *ShardMeta) error {
 		newUid.Bytes(),
 		msg.Topic,
 		msg.Priority,
-		msg.Queue.Id.Bytes(),
+		msg.Namespace.Id.Bytes(),
 		msg.Payload,
 		msg.Metadata,
 		msg.DeliverAfter,
 		msg.TTL,
+		time.Now().Add(msg.DeliverAfter),
+		time.Now().Add(msg.TTL),
 	).Scan(&msg.Id)
+}
+
+func SearchMessages(shard *ShardMeta, prefetched bool, maxRowsByTopic int,
+	optsFn ...OptsFn) ([]Message, error) {
+
+	statement := `WITH ranked AS(
+		SELECT id, topic, priority, payload, metadata,
+		ROW_NUMBER() OVER (PARTITION BY topic ORDER BY id) AS rn
+		FROM messages
+		WHERE readyat <= $1 AND expiresat > $1 AND prefetched = $2
+	)
+	SELECT id, topic, priority, payload, metadata FROM ranked
+	WHERE rn <= $3 LIMIT $4`
+
+	// TODO:
+	// Store lease duration and lease identifier when prefetching
+	// Include in pre-fetch rows with expired leases
+	// Sort returned rows by ascending priority
+
+	opts := &sqlOpts{}
+	opts.withDefaults(optsFn)
+
+	rows, err := shard.Conn().Query(statement, time.Now(), prefetched, maxRowsByTopic, opts.rows)
+	if err != nil {
+		return nil, err
+	}
+
+	results := []Message{}
+	for rows.Next() {
+		item := Message{}
+		rows.Scan(&item.Id, &item.Topic, &item.Priority, &item.Payload, &item.Metadata)
+		results = append(results, item)
+	}
+	return results, nil
+}
+
+func UpdatePrefetchedBatch(shard *ShardMeta, ids []UUID, v bool) (*sql.Tx, error) {
+	tx, err := shard.Conn().Begin()
+	if err != nil {
+		return nil, err
+	}
+
+	statement := `UPDATE messages SET prefetched = $1 WHERE id=ANY($2)`
+	_, err = tx.Exec(statement, v, byteArray(ids))
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	return tx, nil
+}
+
+func byteArray(items []UUID) interface{} {
+	arr := make([][]byte, len(items))
+	for idx, item := range items {
+		arr[idx] = item.Bytes()
+	}
+	return pq.Array(arr)
 }
 
 type UUID [16]byte
@@ -147,3 +210,34 @@ func ParseUUID(v string) (*UUID, error) {
 var (
 	ErrInvalidUUIDFormat = errors.New("invalid UUID format")
 )
+
+const (
+	defaultLimitRows = 100
+)
+
+type OptsFn func(*sqlOpts)
+
+type sqlOpts struct {
+	rows   int
+	offset int
+}
+
+func (opts *sqlOpts) withDefaults(fns []OptsFn) {
+	opts.offset = 0
+	opts.rows = defaultLimitRows
+
+	for _, f := range fns {
+		f(opts)
+	}
+}
+
+func WithLimit(rows int) OptsFn {
+	return func(opts *sqlOpts) {
+		opts.rows = rows
+	}
+}
+func WithOffset(offset int) OptsFn {
+	return func(opts *sqlOpts) {
+		opts.offset = offset
+	}
+}

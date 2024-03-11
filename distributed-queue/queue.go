@@ -1,6 +1,12 @@
 package main
 
-import "time"
+import (
+	"fmt"
+)
+
+const (
+	dequeueBatchSize = 100
+)
 
 type EnqueueResponse struct {
 	MsgId UUID
@@ -20,6 +26,11 @@ type EnqueueWorker struct {
 }
 
 func (w *EnqueueWorker) Run() {
+	cleanup := func() {
+		close(w.shutdown)
+	}
+	defer cleanup()
+
 	w.shutdown = make(chan chan error)
 	for {
 		select {
@@ -56,6 +67,11 @@ type DequeueWorker struct {
 }
 
 func (w *DequeueWorker) Run() {
+	cleanup := func() {
+		close(w.shutdown)
+	}
+	defer cleanup()
+
 	w.shutdown = make(chan chan error)
 	for {
 		select {
@@ -63,17 +79,46 @@ func (w *DequeueWorker) Run() {
 			respCh <- nil
 			return
 		default:
-			// TODO this is just test code
-			time.Sleep(100 * time.Millisecond)
-			w.PrefetchBuffer.C() <- Message{
-				Id:           NewUUID(w.Shard.Id),
-				Topic:        "test",
-				Priority:     1,
-				Payload:      []byte("asdfhnadvuasdfa"),
-				Metadata:     []byte("asdfhnadvuasdfa"),
-				DeliverAfter: time.Second,
-				TTL:          time.Minute,
+			//TODO implement backoff strategy for topics.
+			// This could be achieved by storing which topics we're asked to backoff and exclude
+			// those topics from the search for a certain amount of time
+			// Also, to reduce the pressure on the database we could throttle requests and
+			// implement some internal backoff strategy if requests came back empty
+			// Implementing this worker comes with its own sets of challenges if we want to avoid
+			// overwhelming the database
+			msgs, err := SearchMessages(w.Shard, false, 20, WithLimit(dequeueBatchSize))
+			if err != nil {
+				fmt.Println(err)
+				continue
 			}
+
+			if len(msgs) == 0 {
+				continue
+			}
+
+			replyCh := make(chan []PrefetchStatusCode)
+			envelope := IngestEnvelope{Batch: msgs, RespCh: replyCh}
+			w.PrefetchBuffer.C() <- envelope
+
+			reply := <-replyCh
+			close(replyCh)
+
+			ids := make([]UUID, 0)
+			for i, r := range reply {
+				switch r {
+				case PrefetchStatusOk:
+					ids = append(ids, msgs[i].Id)
+
+				case PrefetchStatusBackoff:
+					// TODO implement me
+				}
+			}
+			tx, err := UpdatePrefetchedBatch(w.Shard, ids, true)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			tx.Commit()
 		}
 	}
 }

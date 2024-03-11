@@ -25,8 +25,8 @@ type APIService struct {
 func (s *APIService) Serve(ctx context.Context) error {
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/queue", s.Handler.getQueuesHandler)
-	mux.HandleFunc("/queue/create", s.Handler.createQueueHandler)
+	mux.HandleFunc("/ns", s.Handler.getNamespacesHandler)
+	mux.HandleFunc("/ns/create", s.Handler.createNsHandler)
 	mux.HandleFunc("/enqueue", s.Handler.enqueueHandler)
 	mux.HandleFunc("/dequeue", s.Handler.dequeueHandler)
 	srv := &http.Server{
@@ -55,33 +55,33 @@ type Handler struct {
 	DequeueBuffer *PriorityBuffer
 }
 
-func (hh *Handler) getQueuesHandler(w http.ResponseWriter, r *http.Request) {
+func (hh *Handler) getNamespacesHandler(w http.ResponseWriter, r *http.Request) {
 
-	results, err := SearchQueues(hh.MainShard)
+	results, err := SearchNamespaces(hh.MainShard)
 	if err != nil {
 		w.Write([]byte(err.Error()))
 		return
 	}
 
-	var queues []H
+	var namespaces []H
 	for _, r := range results {
-		queues = append(queues, H{"queueId": r.Id.String(), "name": r.Name})
+		namespaces = append(namespaces, H{"namespace": r.Id.String(), "name": r.Name})
 	}
-	jsonResponse(w, http.StatusOK, H{"queues": queues})
+	jsonResponse(w, http.StatusOK, H{"namespaces": namespaces})
 }
 
-type CreateQueueRequest struct {
+type CreateNsRequest struct {
 	Name string `json:"name"`
 }
 
-func (hh *Handler) createQueueHandler(w http.ResponseWriter, r *http.Request) {
-	var req CreateQueueRequest
+func (hh *Handler) createNsHandler(w http.ResponseWriter, r *http.Request) {
+	var req CreateNsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Write([]byte(err.Error()))
 		return
 	}
 
-	item := Queue{Name: req.Name}
+	item := Namespace{Name: req.Name}
 	err := item.Create(hh.MainShard)
 	if err != nil {
 		w.Write([]byte(err.Error()))
@@ -89,8 +89,8 @@ func (hh *Handler) createQueueHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = jsonResponse(w, http.StatusOK, H{
-		"queueId": item.Id.String(),
-		"name":    item.Name,
+		"id":   item.Id.String(),
+		"name": item.Name,
 	})
 	if err != nil {
 		w.Write([]byte(err.Error()))
@@ -99,13 +99,13 @@ func (hh *Handler) createQueueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type EnqueueReq struct {
-	QueueID      string        `json:"queueId"`
-	Topic        string        `json:"topic"`
-	Priority     uint32        `json:"priority"`
-	Payload      string        `json:"payload"`
-	Metadata     string        `json:"metadata"`
-	DeliverAfter time.Duration `json:"deliverAfter"` // in nanoseconds
-	TTL          time.Duration `json:"ttl"`          // in nanoseconds
+	Namespace           string        `json:"namespace"`
+	Topic               string        `json:"topic"`
+	Priority            uint32        `json:"priority"`
+	Payload             string        `json:"payload"`
+	Metadata            string        `json:"metadata"`
+	DeliverAfterSeconds time.Duration `json:"deliverAfterSeconds"`
+	TTLSeconds          time.Duration `json:"ttlSeconds"`
 }
 
 func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
@@ -115,12 +115,12 @@ func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	quid, err := ParseUUID(req.QueueID)
+	nsuid, err := ParseUUID(req.Namespace)
 	if err != nil {
-		jsonResponse(w, http.StatusNotFound, H{"error": "invalid queue id"})
+		jsonResponse(w, http.StatusNotFound, H{"error": "invalid namespace id"})
 		return
 	}
-	q := &Queue{Id: *quid}
+	ns := &Namespace{Id: *nsuid}
 	// TODO need to replicate this in every shard to maintain performance
 	// for now just disabling queue verification
 	//
@@ -134,13 +134,13 @@ func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 	//}
 
 	msg := Message{
-		Queue:        q,
+		Namespace:    ns,
 		Topic:        req.Topic,
 		Priority:     req.Priority,
 		Payload:      []byte(req.Payload),
 		Metadata:     []byte(req.Metadata),
-		DeliverAfter: req.DeliverAfter,
-		TTL:          req.TTL,
+		DeliverAfter: req.DeliverAfterSeconds * time.Second,
+		TTL:          req.TTLSeconds * time.Second,
 	}
 
 	respCh := make(chan EnqueueResponse)
@@ -178,7 +178,18 @@ func (hh *Handler) dequeueHandler(w http.ResponseWriter, req *http.Request) {
 
 		req := &DequeueRequest{Topic: "test"}
 		resp := <-hh.DequeueBuffer.Dequeue(req)
-		jsonResponse(w, http.StatusOK, H{"messages": resp.Messages})
+		msgs := []H{}
+		for _, m := range resp.Messages {
+			msgs = append(msgs, H{
+				"id":        m.Id.String(),
+				"topic":     m.Topic,
+				"namespace": "todo",
+				"priority":  m.Priority,
+				"payload":   string(m.Payload),
+				"Metadata":  string(m.Metadata),
+			})
+		}
+		jsonResponse(w, http.StatusOK, H{"messages": msgs})
 	case http.MethodPost:
 	// TODO
 	default:

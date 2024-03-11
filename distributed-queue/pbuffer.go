@@ -8,6 +8,13 @@ import (
 const maxPrefetchItemCount int = 20
 const defaultDequeueLimit int = 20
 
+type PrefetchStatusCode int
+
+const (
+	PrefetchStatusOk      PrefetchStatusCode = 0
+	PrefetchStatusBackoff PrefetchStatusCode = 1
+)
+
 type DequeueRequest struct {
 	Namespace string
 	Topic     string
@@ -21,9 +28,14 @@ type DequeueResponse struct {
 	Messages []Message
 }
 
+type IngestEnvelope struct {
+	Batch  []Message
+	RespCh chan<- []PrefetchStatusCode
+}
+
 type PriorityBuffer struct {
 	apiReqCh chan DequeueRequest
-	ingestCh chan Message
+	ingestCh chan IngestEnvelope
 
 	// buffers contains one key per fetched topic.
 	// Every topic stores a pre-fetch heap with messages
@@ -33,7 +45,7 @@ type PriorityBuffer struct {
 
 func (pb *PriorityBuffer) Serve() chan DequeueRequest {
 	pb.apiReqCh = make(chan DequeueRequest, 300)
-	pb.ingestCh = make(chan Message, 300)
+	pb.ingestCh = make(chan IngestEnvelope, 300)
 	if pb.buffers == nil {
 		pb.buffers = map[string]*msgHeap{}
 	}
@@ -46,18 +58,28 @@ func (pb *PriorityBuffer) Serve() chan DequeueRequest {
 func (pb *PriorityBuffer) serveLoop() {
 	for {
 		select {
-		case msg := <-pb.ingestCh:
-			tHeap, ok := pb.buffers[msg.Topic]
-			if !ok {
-				newHeap := make(msgHeap, 0)
-				tHeap = &newHeap
-				heap.Init(tHeap)
-				pb.buffers[msg.Topic] = tHeap
-			}
+		case envelope := <-pb.ingestCh:
 
-			if len(*tHeap) < maxPrefetchItemCount {
-				heap.Push(tHeap, &msg)
+			reply := make([]PrefetchStatusCode, len(envelope.Batch))
+
+			for i := 0; i < len(envelope.Batch); i++ {
+				msg := envelope.Batch[i]
+				tHeap, ok := pb.buffers[msg.Topic]
+				if !ok {
+					newHeap := make(msgHeap, 0)
+					tHeap = &newHeap
+					heap.Init(tHeap)
+					pb.buffers[msg.Topic] = tHeap
+				}
+
+				if len(*tHeap) < maxPrefetchItemCount {
+					heap.Push(tHeap, &msg)
+					reply[i] = PrefetchStatusOk
+				} else {
+					reply[i] = PrefetchStatusBackoff
+				}
 			}
+			envelope.RespCh <- reply
 
 		case apiReq := <-pb.apiReqCh:
 			tHeap, ok := pb.buffers[apiReq.Topic]
@@ -81,7 +103,7 @@ func (pb *PriorityBuffer) serveLoop() {
 	}
 }
 
-func (pb *PriorityBuffer) C() chan Message {
+func (pb *PriorityBuffer) C() chan IngestEnvelope {
 	return pb.ingestCh
 }
 
