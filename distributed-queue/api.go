@@ -54,7 +54,7 @@ func (s *APIService) Serve(ctx context.Context) error {
 	return nil
 }
 
-type NamespaceGetterCreator interface {
+type namespaceGetterCreator interface {
 	Save(*db.ShardMeta, *domain.Namespace) error
 	FindByStringId(*db.ShardMeta, string) (*domain.Namespace, error)
 	FindAll(*db.ShardMeta, ...db.OptsFn) ([]domain.Namespace, error)
@@ -62,7 +62,7 @@ type NamespaceGetterCreator interface {
 type Handler struct {
 	ShardMgr      *db.ShardManager
 	MainShard     *db.ShardMeta
-	NamespaceRepo NamespaceGetterCreator
+	NamespaceRepo namespaceGetterCreator
 
 	EnqueueBuffer chan EnqueueRequest
 	DequeueBuffer *prefetch.PriorityBuffer

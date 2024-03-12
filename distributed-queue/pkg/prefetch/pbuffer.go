@@ -44,10 +44,11 @@ type PriorityBuffer struct {
 	// buffers contains one key per fetched topic.
 	// Every topic stores a pre-fetch heap with messages
 	// that are ready for delivery up to MaxPrefetchItemCount
-	buffers map[string]*msgHeap
+	buffers  map[string]*msgHeap
+	shutdown chan chan error
 }
 
-func (pb *PriorityBuffer) Serve() chan DequeueRequest {
+func (pb *PriorityBuffer) Run() {
 	pb.apiReqCh = make(chan DequeueRequest, 300)
 	pb.ingestCh = make(chan IngestEnvelope, 300)
 	if pb.buffers == nil {
@@ -55,13 +56,21 @@ func (pb *PriorityBuffer) Serve() chan DequeueRequest {
 	}
 
 	go pb.serveLoop()
-
-	return pb.apiReqCh
 }
 
 func (pb *PriorityBuffer) serveLoop() {
+	pb.shutdown = make(chan chan error)
+	cleanup := func() {
+		close(pb.shutdown)
+	}
+	defer cleanup()
+
 	for {
 		select {
+		case respCh := <-pb.shutdown:
+			respCh <- nil
+			return
+
 		case envelope := <-pb.ingestCh:
 
 			reply := make([]PrefetchStatusCode, len(envelope.Batch))
@@ -105,6 +114,13 @@ func (pb *PriorityBuffer) serveLoop() {
 			apiReq.replyCh <- DequeueResponse{Messages: prefetched}
 		}
 	}
+}
+
+func (pb *PriorityBuffer) Stop() error {
+	errCh := make(chan error)
+	pb.shutdown <- errCh
+
+	return <-errCh
 }
 
 func (pb *PriorityBuffer) C() chan IngestEnvelope {

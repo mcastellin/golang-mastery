@@ -12,6 +12,8 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
 )
 
+const defaultBufferSize int = 500
+
 var shardConfs = []struct {
 	Id         uint32
 	Master     bool
@@ -23,13 +25,40 @@ var shardConfs = []struct {
 	{uint32(40), false, "postgres://user:changeme@localhost:5434/foqs?sslmode=disable"},
 }
 
-func main() {
+type httpServer interface {
+	Serve(context.Context) error
+}
+
+type workerStarterStopper interface {
+	Run()
+	Stop() error
+}
+
+type App struct {
+	server  httpServer
+	workers []workerStarterStopper
+}
+
+func (a *App) AddWorker(w workerStarterStopper) {
+	a.workers = append(a.workers, w)
+}
+
+func (a *App) Run() error {
+
+	for _, w := range a.workers {
+		go w.Run()
+		defer w.Stop()
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	buf := make(chan EnqueueRequest, 500)
+	return a.server.Serve(ctx)
+}
+
+func main() {
+	app := &App{}
 
 	mgr := &db.ShardManager{}
 	for _, c := range shardConfs {
@@ -40,43 +69,40 @@ func main() {
 	}
 	defer mgr.Close()
 
-	prefetchBuf := &prefetch.PriorityBuffer{}
-	prefetchBuf.Serve()
+	enqueueBuf := make(chan EnqueueRequest, defaultBufferSize)
+	ackNackBuf := make(chan AckNackRequest, defaultBufferSize)
 
 	msgRepo := &db.MessageRepository{}
+
+	prefetchBuf := &prefetch.PriorityBuffer{}
+	app.AddWorker(prefetchBuf)
 	// TODO we should have one wAckNack worker per shard and put a router in
 	// front to forward the request to the right worker
-	ackNackBuf := make(chan AckNackRequest, 1000)
-	wAckNack := &AckNackWorker{ShardMgr: mgr, MsgRepository: msgRepo, Buffer: ackNackBuf}
-	go wAckNack.Run()
-	defer wAckNack.Stop()
+	app.AddWorker(&AckNackWorker{ShardMgr: mgr, MsgRepository: msgRepo, Buffer: ackNackBuf})
 
 	for _, shard := range mgr.Shards() {
-		wEnqueue := &EnqueueWorker{Shard: shard, MsgRepository: msgRepo, Buffer: buf}
-		wDequeue := &DequeueWorker{Shard: shard, MsgRepository: msgRepo, PrefetchBuffer: prefetchBuf}
-		go wEnqueue.Run()
-		go wDequeue.Run()
-		defer wEnqueue.Stop()
-		defer wDequeue.Stop()
+		app.AddWorker(&EnqueueWorker{Shard: shard, MsgRepository: msgRepo, Buffer: enqueueBuf})
+		app.AddWorker(&DequeueWorker{Shard: shard, MsgRepository: msgRepo, PrefetchBuffer: prefetchBuf})
 	}
 
 	var version string
-	err := mgr.Master().Conn().QueryRow("SELECT version();").Scan(&version)
+	err := mgr.Master().Conn().QueryRow("SELECT version()").Scan(&version)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Version", version)
+	fmt.Println("PostgreSQL version:", version)
 
 	hh := &Handler{
 		ShardMgr:      mgr,
 		MainShard:     mgr.Master(),
 		NamespaceRepo: &db.NamespaceRepository{},
-		EnqueueBuffer: buf,
+		EnqueueBuffer: enqueueBuf,
 		DequeueBuffer: prefetchBuf,
 		AckNackBuffer: ackNackBuf,
 	}
-	api := &APIService{Handler: hh}
-	if err := api.Serve(ctx); err != nil {
+	app.server = &APIService{Handler: hh}
+
+	if err := app.Run(); err != nil {
 		panic(err)
 	}
 }

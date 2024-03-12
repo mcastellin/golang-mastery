@@ -18,13 +18,13 @@ const (
 	backoffFactor          = 2
 )
 
-type MessageSaver interface {
+type messageSaver interface {
 	Save(*db.ShardMeta, *domain.Message) error
 }
-type MessageAckNacker interface {
+type messageAckNacker interface {
 	Ack(*db.ShardMeta, domain.UUID, bool) error
 }
-type MessageSearcherUpdater interface {
+type messageSearcherUpdater interface {
 	FindMessagesReadyForDelivery(*db.ShardMeta, bool, []string,
 		int, ...db.OptsFn) ([]domain.Message, error)
 
@@ -43,7 +43,7 @@ type EnqueueRequest struct {
 
 type EnqueueWorker struct {
 	Shard         *db.ShardMeta
-	MsgRepository MessageSaver
+	MsgRepository messageSaver
 
 	Buffer chan EnqueueRequest
 
@@ -51,12 +51,12 @@ type EnqueueWorker struct {
 }
 
 func (w *EnqueueWorker) Run() {
+	w.shutdown = make(chan chan error)
 	cleanup := func() {
 		close(w.shutdown)
 	}
 	defer cleanup()
 
-	w.shutdown = make(chan chan error)
 	for {
 		select {
 		case respCh := <-w.shutdown:
@@ -86,7 +86,7 @@ func (w *EnqueueWorker) Stop() error {
 
 type DequeueWorker struct {
 	Shard         *db.ShardMeta
-	MsgRepository MessageSearcherUpdater
+	MsgRepository messageSearcherUpdater
 
 	PrefetchBuffer *prefetch.PriorityBuffer
 
@@ -95,14 +95,13 @@ type DequeueWorker struct {
 }
 
 func (w *DequeueWorker) Run() {
+	w.shutdown = make(chan chan error)
 	cleanup := func() {
 		close(w.shutdown)
 	}
 	defer cleanup()
 
-	w.shutdown = make(chan chan error)
 	w.topicBackoffs = map[string]*wait.BackoffStrategy{}
-
 	retrieveBackoff := wait.NewBackoff(backoffInitialDuration, backoffFactor, backoffMaxDuration)
 	for {
 		select {
@@ -189,7 +188,7 @@ type AckNackRequest struct {
 
 type AckNackWorker struct {
 	ShardMgr      *db.ShardManager
-	MsgRepository MessageAckNacker
+	MsgRepository messageAckNacker
 
 	Buffer chan AckNackRequest
 
@@ -197,12 +196,12 @@ type AckNackWorker struct {
 }
 
 func (w *AckNackWorker) Run() {
+	w.shutdown = make(chan chan error)
 	cleanup := func() {
 		close(w.shutdown)
 	}
 	defer cleanup()
 
-	w.shutdown = make(chan chan error)
 	for {
 		select {
 		case respCh := <-w.shutdown:
