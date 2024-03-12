@@ -7,8 +7,10 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 )
 
-const MaxPrefetchItemCount int = 20
-const defaultDequeueLimitPerTopic int = 20
+const (
+	MaxPrefetchItemCount        int = 20
+	defaultDequeueLimitPerTopic int = 20
+)
 
 type PrefetchStatusCode int
 

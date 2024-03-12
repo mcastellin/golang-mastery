@@ -13,6 +13,7 @@ func NewBackoff(base time.Duration, factor float32, backoffCap time.Duration) *B
 	}
 }
 
+// BackoffStrategy contains the state information of the backoff
 type BackoffStrategy struct {
 	initialDuration time.Duration
 	factor          float32
@@ -22,6 +23,7 @@ type BackoffStrategy struct {
 	nextActivation time.Time
 }
 
+// Backoff processing rate by the determined factor
 func (s *BackoffStrategy) Backoff() {
 	s.duration = s.initialDuration + time.Duration(float32(s.duration)*s.factor)
 	if s.duration > s.durationCap {
