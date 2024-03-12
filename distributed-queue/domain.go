@@ -86,17 +86,18 @@ func (msg *Message) Create(shard *ShardMeta) error {
 	).Scan(&msg.Id)
 }
 
-func SearchMessages(shard *ShardMeta, prefetched bool, maxRowsByTopic int,
-	optsFn ...OptsFn) ([]Message, error) {
+func SearchMessages(shard *ShardMeta, prefetched bool, excludedTopics []string,
+	maxRowsByTopic int, optsFn ...OptsFn) ([]Message, error) {
 
 	statement := `WITH ranked AS(
 		SELECT id, topic, priority, payload, metadata,
 		ROW_NUMBER() OVER (PARTITION BY topic ORDER BY id) AS rn
 		FROM messages
-		WHERE readyat <= $1 AND expiresat > $1 AND prefetched = $2
+		WHERE readyat <= $1 AND expiresat > $1 AND prefetched = $2 AND topic NOT IN ($3)
+		ORDER BY priority
 	)
 	SELECT id, topic, priority, payload, metadata FROM ranked
-	WHERE rn <= $3 LIMIT $4`
+	WHERE rn <= $4 LIMIT $5`
 
 	// TODO:
 	// Store lease duration and lease identifier when prefetching
@@ -106,7 +107,8 @@ func SearchMessages(shard *ShardMeta, prefetched bool, maxRowsByTopic int,
 	opts := &sqlOpts{}
 	opts.withDefaults(optsFn)
 
-	rows, err := shard.Conn().Query(statement, time.Now(), prefetched, maxRowsByTopic, opts.rows)
+	rows, err := shard.Conn().Query(statement,
+		time.Now(), prefetched, pq.Array(excludedTopics), maxRowsByTopic, opts.rows)
 	if err != nil {
 		return nil, err
 	}

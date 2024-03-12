@@ -16,3 +16,8 @@ CREATE TABLE IF NOT EXISTS messages (
     expiresat TIMESTAMP NOT NULL,
     prefetched BOOLEAN DEFAULT false
 );
+
+CREATE INDEX IF NOT EXISTS topic_id_idx ON messages (topic, id);
+
+CREATE INDEX IF NOT EXISTS messages_filter_idx ON messages (prefetched, readyat, expiresat)
+WHERE prefetched = false; -- partial index assuming prefetched = false most of the time

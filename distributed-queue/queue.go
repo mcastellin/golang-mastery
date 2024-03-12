@@ -63,7 +63,8 @@ type DequeueWorker struct {
 	Shard          *ShardMeta
 	PrefetchBuffer *PriorityBuffer
 
-	shutdown chan chan error
+	shutdown      chan chan error
+	topicBackoffs map[string]*backoffStrategy
 }
 
 func (w *DequeueWorker) Run() {
@@ -73,12 +74,15 @@ func (w *DequeueWorker) Run() {
 	defer cleanup()
 
 	w.shutdown = make(chan chan error)
+	w.topicBackoffs = map[string]*backoffStrategy{}
+
+	retrieveBackoff := newBackoff()
 	for {
 		select {
 		case respCh := <-w.shutdown:
 			respCh <- nil
 			return
-		default:
+		case <-retrieveBackoff.after():
 			//TODO implement backoff strategy for topics.
 			// This could be achieved by storing which topics we're asked to backoff and exclude
 			// those topics from the search for a certain amount of time
@@ -86,15 +90,19 @@ func (w *DequeueWorker) Run() {
 			// implement some internal backoff strategy if requests came back empty
 			// Implementing this worker comes with its own sets of challenges if we want to avoid
 			// overwhelming the database
-			msgs, err := SearchMessages(w.Shard, false, 20, WithLimit(dequeueBatchSize))
+			exclusions := excludedTopics(w.topicBackoffs)
+			msgs, err := SearchMessages(w.Shard,
+				false, exclusions, 20, WithLimit(dequeueBatchSize))
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
 
 			if len(msgs) == 0 {
+				retrieveBackoff.backoff()
 				continue
 			}
+			retrieveBackoff.reset()
 
 			replyCh := make(chan []PrefetchStatusCode)
 			envelope := IngestEnvelope{Batch: msgs, RespCh: replyCh}
@@ -110,7 +118,12 @@ func (w *DequeueWorker) Run() {
 					ids = append(ids, msgs[i].Id)
 
 				case PrefetchStatusBackoff:
-					// TODO implement me
+					b := w.topicBackoffs[msgs[i].Topic]
+					if b == nil {
+						b = newBackoff()
+						w.topicBackoffs[msgs[i].Topic] = b
+					}
+					b.backoff()
 				}
 			}
 			tx, err := UpdatePrefetchedBatch(w.Shard, ids, true)
@@ -121,6 +134,18 @@ func (w *DequeueWorker) Run() {
 			tx.Commit()
 		}
 	}
+}
+
+func excludedTopics(backoffs map[string]*backoffStrategy) []string {
+	excludes := []string{}
+	for t, b := range backoffs {
+		if !b.active() {
+			excludes = append(excludes, t)
+		} else {
+			delete(backoffs, t)
+		}
+	}
+	return excludes
 }
 
 func (w *DequeueWorker) Stop() error {
