@@ -1,4 +1,4 @@
-package domain
+package db
 
 import (
 	"database/sql"

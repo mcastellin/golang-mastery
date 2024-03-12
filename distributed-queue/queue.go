@@ -1,9 +1,11 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/db"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/wait"
@@ -16,6 +18,19 @@ const (
 	backoffFactor          = 2
 )
 
+type MessageSaver interface {
+	Save(*db.ShardMeta, *domain.Message) error
+}
+type MessageAckNacker interface {
+	Ack(*db.ShardMeta, domain.UUID, bool) error
+}
+type MessageSearcherUpdater interface {
+	FindMessagesReadyForDelivery(*db.ShardMeta, bool, []string,
+		int, ...db.OptsFn) ([]domain.Message, error)
+
+	UpdatePrefetchedBatch(*db.ShardMeta, []domain.UUID, bool) (*sql.Tx, error)
+}
+
 type EnqueueResponse struct {
 	MsgId domain.UUID
 	Err   error
@@ -27,7 +42,9 @@ type EnqueueRequest struct {
 }
 
 type EnqueueWorker struct {
-	Shard  *domain.ShardMeta
+	Shard         *db.ShardMeta
+	MsgRepository MessageSaver
+
 	Buffer chan EnqueueRequest
 
 	shutdown chan chan error
@@ -49,7 +66,7 @@ func (w *EnqueueWorker) Run() {
 		case enqReq := <-w.Buffer:
 			msg := enqReq.Msg
 			var reply EnqueueResponse
-			if err := msg.Create(w.Shard); err != nil {
+			if err := w.MsgRepository.Save(w.Shard, &msg); err != nil {
 				reply.Err = err
 				enqReq.RespCh <- reply
 				continue
@@ -68,7 +85,9 @@ func (w *EnqueueWorker) Stop() error {
 }
 
 type DequeueWorker struct {
-	Shard          *domain.ShardMeta
+	Shard         *db.ShardMeta
+	MsgRepository MessageSearcherUpdater
+
 	PrefetchBuffer *prefetch.PriorityBuffer
 
 	shutdown      chan chan error
@@ -99,8 +118,8 @@ func (w *DequeueWorker) Run() {
 			// Implementing this worker comes with its own sets of challenges if we want to avoid
 			// overwhelming the database
 			exclusions := excludedTopics(w.topicBackoffs)
-			msgs, err := domain.SearchMessages(w.Shard, false,
-				exclusions, prefetch.MaxPrefetchItemCount, domain.WithLimit(dequeueBatchSize))
+			msgs, err := w.MsgRepository.FindMessagesReadyForDelivery(w.Shard, false,
+				exclusions, prefetch.MaxPrefetchItemCount, db.WithLimit(dequeueBatchSize))
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -134,7 +153,7 @@ func (w *DequeueWorker) Run() {
 					b.Backoff()
 				}
 			}
-			tx, err := domain.UpdatePrefetchedBatch(w.Shard, ids, true)
+			tx, err := w.MsgRepository.UpdatePrefetchedBatch(w.Shard, ids, true)
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -169,8 +188,10 @@ type AckNackRequest struct {
 }
 
 type AckNackWorker struct {
-	ShardMgr *domain.ShardManager
-	Buffer   chan AckNackRequest
+	ShardMgr      *db.ShardManager
+	MsgRepository MessageAckNacker
+
+	Buffer chan AckNackRequest
 
 	shutdown chan chan error
 }
@@ -190,8 +211,7 @@ func (w *AckNackWorker) Run() {
 
 		case ackNack := <-w.Buffer:
 			shard := w.ShardMgr.Get(ackNack.Id.ShardId())
-			msg := &domain.Message{Id: ackNack.Id}
-			err := msg.Ack(shard, ackNack.Ack)
+			err := w.MsgRepository.Ack(shard, ackNack.Id, ackNack.Ack)
 			if err != nil {
 				fmt.Println(err)
 			}

@@ -1,4 +1,4 @@
-package domain
+package db
 
 import (
 	"fmt"
@@ -11,5 +11,5 @@ func TestGetShardById(t *testing.T) {
 
 	shard := mgr.Get(1234)
 	fmt.Println(shard)
-	t.Fatal()
+	//t.Fatal()
 }

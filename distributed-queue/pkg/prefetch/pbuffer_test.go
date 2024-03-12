@@ -19,9 +19,10 @@ func TestBuffer(t *testing.T) {
 	}
 
 	notificationCh := make(chan bool)
-	for _, m := range testMessages {
-		buf.C() <- m
-	}
+	respCh := make(chan []PrefetchStatusCode)
+	buf.C() <- IngestEnvelope{Batch: testMessages, RespCh: respCh}
+	<-respCh
+	close(respCh)
 
 	consumer := func() {
 		consumed := 0

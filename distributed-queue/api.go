@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/db"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/wait"
@@ -53,9 +54,16 @@ func (s *APIService) Serve(ctx context.Context) error {
 	return nil
 }
 
+type NamespaceGetterCreator interface {
+	Save(*db.ShardMeta, *domain.Namespace) error
+	FindByStringId(*db.ShardMeta, string) (*domain.Namespace, error)
+	FindAll(*db.ShardMeta, ...db.OptsFn) ([]domain.Namespace, error)
+}
 type Handler struct {
-	ShardMgr      *domain.ShardManager
-	MainShard     *domain.ShardMeta
+	ShardMgr      *db.ShardManager
+	MainShard     *db.ShardMeta
+	NamespaceRepo NamespaceGetterCreator
+
 	EnqueueBuffer chan EnqueueRequest
 	DequeueBuffer *prefetch.PriorityBuffer
 	AckNackBuffer chan<- AckNackRequest
@@ -63,7 +71,7 @@ type Handler struct {
 
 func (hh *Handler) getNamespacesHandler(w http.ResponseWriter, r *http.Request) {
 
-	results, err := domain.SearchNamespaces(hh.MainShard)
+	results, err := hh.NamespaceRepo.FindAll(hh.MainShard, db.WithLimit(100))
 	if err != nil {
 		w.Write([]byte(err.Error()))
 		return
@@ -88,7 +96,7 @@ func (hh *Handler) createNsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	item := domain.Namespace{Name: req.Name}
-	err := item.Create(hh.MainShard)
+	err := hh.NamespaceRepo.Save(hh.MainShard, &item)
 	if err != nil {
 		w.Write([]byte(err.Error()))
 		return
