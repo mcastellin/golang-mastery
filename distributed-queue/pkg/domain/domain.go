@@ -1,4 +1,4 @@
-package main
+package domain
 
 import (
 	"database/sql"
@@ -86,6 +86,17 @@ func (msg *Message) Create(shard *ShardMeta) error {
 	).Scan(&msg.Id)
 }
 
+func (msg *Message) Ack(shard *ShardMeta, ack bool) error {
+	var statement string
+	if ack {
+		statement = `DELETE FROM messages WHERE id = $1`
+	} else {
+		statement = `UPDATE messages SET prefetched = false WHERE id = $1`
+	}
+	_, err := shard.Conn().Exec(statement, msg.Id.Bytes())
+	return err
+}
+
 func SearchMessages(shard *ShardMeta, prefetched bool, excludedTopics []string,
 	maxRowsByTopic int, optsFn ...OptsFn) ([]Message, error) {
 
@@ -93,7 +104,7 @@ func SearchMessages(shard *ShardMeta, prefetched bool, excludedTopics []string,
 		SELECT id, topic, priority, payload, metadata,
 		ROW_NUMBER() OVER (PARTITION BY topic ORDER BY id) AS rn
 		FROM messages
-		WHERE readyat <= $1 AND expiresat > $1 AND prefetched = $2 AND topic NOT IN ($3)
+		WHERE readyat <= $1 AND expiresat > $1 AND prefetched = $2 AND NOT topic = ANY($3)
 		ORDER BY priority
 	)
 	SELECT id, topic, priority, payload, metadata FROM ranked

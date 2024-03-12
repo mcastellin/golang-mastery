@@ -1,15 +1,17 @@
-package main
+package prefetch
 
 import (
 	"testing"
 	"time"
+
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 )
 
 func TestBuffer(t *testing.T) {
 	buf := &PriorityBuffer{}
 	buf.Serve()
 
-	testMessages := []Message{
+	testMessages := []domain.Message{
 		{Topic: "test", Priority: 10},
 		{Topic: "test", Priority: 91928347},
 		{Topic: "test", Priority: 700},

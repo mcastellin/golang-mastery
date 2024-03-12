@@ -2,24 +2,32 @@ package main
 
 import (
 	"fmt"
+	"time"
+
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/wait"
 )
 
 const (
-	dequeueBatchSize = 100
+	dequeueBatchSize       = 100
+	backoffInitialDuration = 10 * time.Millisecond
+	backoffMaxDuration     = 5 * time.Second
+	backoffFactor          = 2
 )
 
 type EnqueueResponse struct {
-	MsgId UUID
+	MsgId domain.UUID
 	Err   error
 }
 
 type EnqueueRequest struct {
-	Msg    Message
+	Msg    domain.Message
 	RespCh chan<- EnqueueResponse
 }
 
 type EnqueueWorker struct {
-	Shard  *ShardMeta
+	Shard  *domain.ShardMeta
 	Buffer chan EnqueueRequest
 
 	shutdown chan chan error
@@ -60,11 +68,11 @@ func (w *EnqueueWorker) Stop() error {
 }
 
 type DequeueWorker struct {
-	Shard          *ShardMeta
-	PrefetchBuffer *PriorityBuffer
+	Shard          *domain.ShardMeta
+	PrefetchBuffer *prefetch.PriorityBuffer
 
 	shutdown      chan chan error
-	topicBackoffs map[string]*backoffStrategy
+	topicBackoffs map[string]*wait.BackoffStrategy
 }
 
 func (w *DequeueWorker) Run() {
@@ -74,15 +82,15 @@ func (w *DequeueWorker) Run() {
 	defer cleanup()
 
 	w.shutdown = make(chan chan error)
-	w.topicBackoffs = map[string]*backoffStrategy{}
+	w.topicBackoffs = map[string]*wait.BackoffStrategy{}
 
-	retrieveBackoff := newBackoff()
+	retrieveBackoff := wait.NewBackoff(backoffInitialDuration, backoffFactor, backoffMaxDuration)
 	for {
 		select {
 		case respCh := <-w.shutdown:
 			respCh <- nil
 			return
-		case <-retrieveBackoff.after():
+		case <-retrieveBackoff.After():
 			//TODO implement backoff strategy for topics.
 			// This could be achieved by storing which topics we're asked to backoff and exclude
 			// those topics from the search for a certain amount of time
@@ -91,42 +99,42 @@ func (w *DequeueWorker) Run() {
 			// Implementing this worker comes with its own sets of challenges if we want to avoid
 			// overwhelming the database
 			exclusions := excludedTopics(w.topicBackoffs)
-			msgs, err := SearchMessages(w.Shard,
-				false, exclusions, 20, WithLimit(dequeueBatchSize))
+			msgs, err := domain.SearchMessages(w.Shard, false,
+				exclusions, prefetch.MaxPrefetchItemCount, domain.WithLimit(dequeueBatchSize))
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
 
 			if len(msgs) == 0 {
-				retrieveBackoff.backoff()
+				retrieveBackoff.Backoff()
 				continue
 			}
-			retrieveBackoff.reset()
+			retrieveBackoff.Reset()
 
-			replyCh := make(chan []PrefetchStatusCode)
-			envelope := IngestEnvelope{Batch: msgs, RespCh: replyCh}
+			replyCh := make(chan []prefetch.PrefetchStatusCode)
+			envelope := prefetch.IngestEnvelope{Batch: msgs, RespCh: replyCh}
 			w.PrefetchBuffer.C() <- envelope
 
 			reply := <-replyCh
 			close(replyCh)
 
-			ids := make([]UUID, 0)
+			ids := make([]domain.UUID, 0)
 			for i, r := range reply {
 				switch r {
-				case PrefetchStatusOk:
+				case prefetch.PrefetchStatusOk:
 					ids = append(ids, msgs[i].Id)
 
-				case PrefetchStatusBackoff:
+				case prefetch.PrefetchStatusBackoff:
 					b := w.topicBackoffs[msgs[i].Topic]
 					if b == nil {
-						b = newBackoff()
+						b = wait.NewBackoff(backoffInitialDuration, backoffFactor, backoffMaxDuration)
 						w.topicBackoffs[msgs[i].Topic] = b
 					}
-					b.backoff()
+					b.Backoff()
 				}
 			}
-			tx, err := UpdatePrefetchedBatch(w.Shard, ids, true)
+			tx, err := domain.UpdatePrefetchedBatch(w.Shard, ids, true)
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -136,10 +144,10 @@ func (w *DequeueWorker) Run() {
 	}
 }
 
-func excludedTopics(backoffs map[string]*backoffStrategy) []string {
+func excludedTopics(backoffs map[string]*wait.BackoffStrategy) []string {
 	excludes := []string{}
 	for t, b := range backoffs {
-		if !b.active() {
+		if !b.Active() {
 			excludes = append(excludes, t)
 		} else {
 			delete(backoffs, t)
@@ -149,6 +157,49 @@ func excludedTopics(backoffs map[string]*backoffStrategy) []string {
 }
 
 func (w *DequeueWorker) Stop() error {
+	errCh := make(chan error)
+	w.shutdown <- errCh
+
+	return <-errCh
+}
+
+type AckNackRequest struct {
+	Id  domain.UUID
+	Ack bool
+}
+
+type AckNackWorker struct {
+	ShardMgr *domain.ShardManager
+	Buffer   chan AckNackRequest
+
+	shutdown chan chan error
+}
+
+func (w *AckNackWorker) Run() {
+	cleanup := func() {
+		close(w.shutdown)
+	}
+	defer cleanup()
+
+	w.shutdown = make(chan chan error)
+	for {
+		select {
+		case respCh := <-w.shutdown:
+			respCh <- nil
+			return
+
+		case ackNack := <-w.Buffer:
+			shard := w.ShardMgr.Get(ackNack.Id.ShardId())
+			msg := &domain.Message{Id: ackNack.Id}
+			err := msg.Ack(shard, ackNack.Ack)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+	}
+}
+
+func (w *AckNackWorker) Stop() error {
 	errCh := make(chan error)
 	w.shutdown <- errCh
 

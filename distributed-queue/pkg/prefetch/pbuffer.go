@@ -1,12 +1,14 @@
-package main
+package prefetch
 
 import (
 	"container/heap"
 	"time"
+
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 )
 
-const maxPrefetchItemCount int = 20
-const defaultDequeueLimit int = 20
+const MaxPrefetchItemCount int = 20
+const defaultDequeueLimitPerTopic int = 20
 
 type PrefetchStatusCode int
 
@@ -25,11 +27,11 @@ type DequeueRequest struct {
 }
 
 type DequeueResponse struct {
-	Messages []Message
+	Messages []domain.Message
 }
 
 type IngestEnvelope struct {
-	Batch  []Message
+	Batch  []domain.Message
 	RespCh chan<- []PrefetchStatusCode
 }
 
@@ -39,7 +41,7 @@ type PriorityBuffer struct {
 
 	// buffers contains one key per fetched topic.
 	// Every topic stores a pre-fetch heap with messages
-	// that are ready for delivery up to maxPrefetchItemCount
+	// that are ready for delivery up to MaxPrefetchItemCount
 	buffers map[string]*msgHeap
 }
 
@@ -72,7 +74,7 @@ func (pb *PriorityBuffer) serveLoop() {
 					pb.buffers[msg.Topic] = tHeap
 				}
 
-				if len(*tHeap) < maxPrefetchItemCount {
+				if len(*tHeap) < MaxPrefetchItemCount {
 					heap.Push(tHeap, &msg)
 					reply[i] = PrefetchStatusOk
 				} else {
@@ -84,18 +86,18 @@ func (pb *PriorityBuffer) serveLoop() {
 		case apiReq := <-pb.apiReqCh:
 			tHeap, ok := pb.buffers[apiReq.Topic]
 			if !ok {
-				apiReq.replyCh <- DequeueResponse{Messages: []Message{}}
+				apiReq.replyCh <- DequeueResponse{Messages: []domain.Message{}}
 				continue
 			}
 
 			limit := apiReq.Limit
 			if limit == 0 {
-				limit = defaultDequeueLimit
+				limit = defaultDequeueLimitPerTopic
 			}
 			n := min(len(*tHeap), limit)
-			prefetched := make([]Message, n)
+			prefetched := make([]domain.Message, n)
 			for i := 0; i < n; i++ {
-				item := heap.Pop(tHeap).(*Message)
+				item := heap.Pop(tHeap).(*domain.Message)
 				prefetched[i] = *item
 			}
 			apiReq.replyCh <- DequeueResponse{Messages: prefetched}
@@ -116,7 +118,7 @@ func (pb *PriorityBuffer) Dequeue(req *DequeueRequest) chan DequeueResponse {
 	return respCh
 }
 
-type msgHeap []*Message
+type msgHeap []*domain.Message
 
 func (mh msgHeap) Len() int {
 	return len(mh)
@@ -131,7 +133,7 @@ func (mh msgHeap) Swap(i, j int) {
 }
 
 func (mh *msgHeap) Push(v any) {
-	item := v.(*Message)
+	item := v.(*domain.Message)
 	*mh = append(*mh, item)
 }
 
