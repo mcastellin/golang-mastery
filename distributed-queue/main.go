@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -90,16 +91,24 @@ func main() {
 	}
 	fmt.Println("PostgreSQL version:", version)
 
-	hh := &Handler{
-		ShardMgr:      mgr,
-		MainShard:     mgr.Master(),
-		NamespaceRepo: &db.NamespaceRepository{},
+	nsService := &NamespaceService{
+		MainShard:    mgr.Master(),
+		NsRepository: &db.NamespaceRepository{},
+	}
+	msgService := &MessagesService{
 		EnqueueBuffer: enqueueBuffer,
 		DequeueBuffer: prefetchBuf,
 		AckNackBuffer: ackNackBuf,
 	}
-	app.server = &APIService{Handler: hh}
 
+	api := NewApiServer(":8080", "/")
+	api.HandleFunc(http.MethodGet, "/ns", nsService.HandleGetNamespaces)
+	api.HandleFunc(http.MethodPost, "/ns", nsService.HandleCreateNamespace)
+	api.HandleFunc(http.MethodPost, "/message/enqueue", msgService.HandleEnqueue)
+	api.HandleFunc(http.MethodPost, "/message/dequeue", msgService.HandleDequeue)
+	api.HandleFunc(http.MethodPost, "/message/ack", msgService.HandleAckNack)
+
+	app.server = api
 	if err := app.Run(); err != nil {
 		panic(err)
 	}

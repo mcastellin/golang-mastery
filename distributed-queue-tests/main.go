@@ -19,6 +19,14 @@ const baseUrl = "http://localhost:8080"
 
 var topics = []string{"test", "one", "there-it-is", "one-two-three-zero", "another-one", "done", "my", "research", "on", "this", "one", "is", "very", "nice", "and", "tasty", "task"}
 
+var (
+	urlCreateNs       = fmt.Sprintf("%s/ns", baseUrl)
+	urlGetNs          = fmt.Sprintf("%s/ns", baseUrl)
+	urlEnqueueMessage = fmt.Sprintf("%s/message/enqueue", baseUrl)
+	urlDequeueMessage = fmt.Sprintf("%s/message/dequeue", baseUrl)
+	urlAckMessage     = fmt.Sprintf("%s/message/ack", baseUrl)
+)
+
 func createNamespaces() ([]string, error) {
 	cli := &http.Client{
 		Timeout: defaultTimeout,
@@ -33,7 +41,7 @@ func createNamespaces() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		req, err := http.NewRequest("POST", fmt.Sprintf("%s/ns/create", baseUrl), bytes.NewReader(payload))
+		req, err := http.NewRequest(http.MethodPost, urlCreateNs, bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +85,7 @@ func attack(namespaces []string) error {
 					fmt.Println(err)
 					continue
 				}
-				req, err := http.NewRequest("POST", fmt.Sprintf("%s/enqueue", baseUrl), bytes.NewReader(payload))
+				req, err := http.NewRequest(http.MethodPost, urlEnqueueMessage, bytes.NewReader(payload))
 				if err != nil {
 					fmt.Println(err)
 					continue
@@ -144,7 +152,7 @@ func consumer(notifyCh chan<- int, topicIdx int) {
 
 		payload, _ := json.Marshal(body)
 		cli := http.Client{Timeout: 30 * time.Second}
-		req, err := http.NewRequest("POST", fmt.Sprintf("%s/dequeue", baseUrl), bytes.NewReader(payload))
+		req, err := http.NewRequest(http.MethodPost, urlDequeueMessage, bytes.NewReader(payload))
 		if err != nil {
 			fmt.Println(err)
 			continue
@@ -186,7 +194,7 @@ func ack(msgId string, v bool) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/message/ack", baseUrl), bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, urlAckMessage, bytes.NewReader(body))
 	if err != nil {
 		fmt.Println(err)
 	}
