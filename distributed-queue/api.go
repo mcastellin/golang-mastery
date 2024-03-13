@@ -70,7 +70,7 @@ func (s *NamespaceService) HandleGetNamespaces(c *ApiCtx) {
 type MessagesService struct {
 	EnqueueBuffer chan queue.EnqueueRequest
 	DequeueBuffer *prefetch.PriorityBuffer
-	AckNackBuffer chan<- queue.AckNackRequest
+	AckNackRouter *queue.AckNackRouter
 }
 
 type EnqueueRequest struct {
@@ -222,6 +222,9 @@ func (s *MessagesService) HandleAckNack(c *ApiCtx) {
 			continue
 		}
 		req := queue.AckNackRequest{Id: *uid, Ack: ack.Ack}
-		s.AckNackBuffer <- req
+		if err := s.AckNackRouter.Route(uid, req); err != nil {
+			c.JsonResponse(http.StatusInternalServerError, H{"error": err.Error()})
+			return
+		}
 	}
 }

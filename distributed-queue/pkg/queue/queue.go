@@ -228,21 +228,21 @@ type AckNackRequest struct {
 	Ack bool
 }
 
-func NewAckNackWorker(mgr *db.ShardManager, buf chan AckNackRequest) *AckNackWorker {
+func NewAckNackWorker(shard *db.ShardMeta, buf chan AckNackRequest) *AckNackWorker {
 	ibuf := buf
 	if buf == nil {
 		ibuf = make(chan AckNackRequest, defaultChanSize)
 	}
 	return &AckNackWorker{
-		shardMgr: mgr,
-		repo:     &db.MessageRepository{},
-		buffer:   ibuf,
+		shard:  shard,
+		repo:   &db.MessageRepository{},
+		buffer: ibuf,
 	}
 }
 
 type AckNackWorker struct {
-	shardMgr *db.ShardManager
-	repo     messageAckNacker
+	shard *db.ShardMeta
+	repo  messageAckNacker
 
 	buffer chan AckNackRequest
 
@@ -264,8 +264,7 @@ func (w *AckNackWorker) Run() error {
 				return
 
 			case ackNack := <-w.buffer:
-				shard := w.shardMgr.Get(ackNack.Id.ShardId())
-				err := w.repo.AckNack(shard, ackNack.Id, ackNack.Ack)
+				err := w.repo.AckNack(w.shard, ackNack.Id, ackNack.Ack)
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -281,4 +280,24 @@ func (w *AckNackWorker) Stop() error {
 	w.shutdown <- errCh
 
 	return <-errCh
+}
+
+type AckNackRouter struct {
+	routes map[uint32]chan<- AckNackRequest
+}
+
+func (r *AckNackRouter) RegisterWorker(shardId uint32, w *AckNackWorker) {
+	if r.routes == nil {
+		r.routes = map[uint32]chan<- AckNackRequest{}
+	}
+	r.routes[shardId] = w.buffer
+}
+
+func (r *AckNackRouter) Route(uid *domain.UUID, req AckNackRequest) error {
+	wChan, ok := r.routes[uid.ShardId()]
+	if !ok {
+		return fmt.Errorf("could not route for uid %s", uid.String())
+	}
+	wChan <- req
+	return nil
 }

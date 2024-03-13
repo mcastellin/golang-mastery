@@ -72,17 +72,21 @@ func main() {
 	defer mgr.Close()
 
 	enqueueBuffer := make(chan queue.EnqueueRequest, defaultBufferSize)
-	ackNackBuf := make(chan queue.AckNackRequest, defaultBufferSize)
 
 	prefetchBuf := prefetch.NewPriorityBuffer()
 	app.AddWorker(prefetchBuf)
-	// TODO we should have one wAckNack worker per shard and put a router in
-	// front to forward the request to the right worker
-	app.AddWorker(queue.NewAckNackWorker(mgr, ackNackBuf))
+
+	ackNackRouter := &queue.AckNackRouter{}
 
 	for _, shard := range mgr.Shards() {
 		app.AddWorker(queue.NewEnqueueWorker(shard, enqueueBuffer))
 		app.AddWorker(queue.NewDequeueWorker(shard, prefetchBuf))
+
+		ackNackBuf := make(chan queue.AckNackRequest, defaultBufferSize)
+		ackNackW := queue.NewAckNackWorker(shard, ackNackBuf)
+
+		app.AddWorker(ackNackW)
+		ackNackRouter.RegisterWorker(shard.Id, ackNackW)
 	}
 
 	nsService := &NamespaceService{
@@ -92,7 +96,7 @@ func main() {
 	msgService := &MessagesService{
 		EnqueueBuffer: enqueueBuffer,
 		DequeueBuffer: prefetchBuf,
-		AckNackBuffer: ackNackBuf,
+		AckNackRouter: ackNackRouter,
 	}
 
 	api := NewApiServer(":8080", "/")
