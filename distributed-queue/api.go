@@ -169,7 +169,7 @@ func (s *MessagesService) HandleDequeue(c *ApiCtx) {
 		r.Timeout = 30 * time.Second
 	}
 
-	backoff := wait.NewBackoff(time.Millisecond, 10, time.Second)
+	backoff := wait.NewBackoff(time.Millisecond, 2, time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), r.Timeout)
 	defer cancel()
 

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	MaxPrefetchItemCount        int = 20
+	MaxPrefetchItemCount        int = 100
 	defaultDequeueLimitPerTopic int = 20
 	defaultChanSize             int = 300
 )

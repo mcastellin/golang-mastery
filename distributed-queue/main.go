@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +23,8 @@ var shardConfs = []struct {
 	{uint32(30), false, "postgres://user:changeme@localhost:5433/foqs?sslmode=disable"},
 	{uint32(40), false, "postgres://user:changeme@localhost:5434/foqs?sslmode=disable"},
 }
+
+const defaultBufferSize = 500
 
 type httpServer interface {
 	Serve(context.Context) error
@@ -70,8 +71,8 @@ func main() {
 	}
 	defer mgr.Close()
 
-	enqueueBuffer := make(chan queue.EnqueueRequest, 500)
-	ackNackBuf := make(chan queue.AckNackRequest, 500)
+	enqueueBuffer := make(chan queue.EnqueueRequest, defaultBufferSize)
+	ackNackBuf := make(chan queue.AckNackRequest, defaultBufferSize)
 
 	prefetchBuf := prefetch.NewPriorityBuffer()
 	app.AddWorker(prefetchBuf)
@@ -83,13 +84,6 @@ func main() {
 		app.AddWorker(queue.NewEnqueueWorker(shard, enqueueBuffer))
 		app.AddWorker(queue.NewDequeueWorker(shard, prefetchBuf))
 	}
-
-	var version string
-	err := mgr.Master().Conn().QueryRow("SELECT version()").Scan(&version)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("PostgreSQL version:", version)
 
 	nsService := &NamespaceService{
 		MainShard:    mgr.Master(),
