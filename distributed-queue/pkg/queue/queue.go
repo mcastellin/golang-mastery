@@ -16,6 +16,7 @@ const (
 	backoffInitialDuration = 10 * time.Millisecond
 	backoffMaxDuration     = 5 * time.Second
 	backoffFactor          = 2
+	defaultChanSize        = 300
 )
 
 type messageSaver interface {
@@ -41,11 +42,23 @@ type EnqueueRequest struct {
 	RespCh chan<- EnqueueResponse
 }
 
-type EnqueueWorker struct {
-	Shard         *db.ShardMeta
-	MsgRepository messageSaver
+func NewEnqueueWorker(shard *db.ShardMeta, buf chan EnqueueRequest) *EnqueueWorker {
+	ibuf := buf
+	if ibuf == nil {
+		ibuf = make(chan EnqueueRequest, defaultChanSize)
+	}
+	return &EnqueueWorker{
+		shard:  shard,
+		repo:   &db.MessageRepository{},
+		buffer: ibuf,
+	}
+}
 
-	Buffer chan EnqueueRequest
+type EnqueueWorker struct {
+	shard *db.ShardMeta
+	repo  messageSaver
+
+	buffer chan EnqueueRequest
 
 	shutdown chan chan error
 }
@@ -64,7 +77,7 @@ func (w *EnqueueWorker) Run() error {
 				respCh <- nil
 				return
 
-			case enqReq := <-w.Buffer:
+			case enqReq := <-w.buffer:
 				reply := w.enqueueMessage(&enqReq.Msg)
 				enqReq.RespCh <- reply
 			}
@@ -76,7 +89,7 @@ func (w *EnqueueWorker) Run() error {
 
 func (w *EnqueueWorker) enqueueMessage(msg *domain.Message) EnqueueResponse {
 	var reply EnqueueResponse
-	if err := w.MsgRepository.Save(w.Shard, msg); err != nil {
+	if err := w.repo.Save(w.shard, msg); err != nil {
 		reply.Err = err
 		return reply
 	}
@@ -91,11 +104,19 @@ func (w *EnqueueWorker) Stop() error {
 	return <-errCh
 }
 
-type DequeueWorker struct {
-	Shard         *db.ShardMeta
-	MsgRepository messageSearcherUpdater
+func NewDequeueWorker(shard *db.ShardMeta, buf *prefetch.PriorityBuffer) *DequeueWorker {
+	return &DequeueWorker{
+		shard:       shard,
+		repo:        &db.MessageRepository{},
+		prefetchBuf: buf,
+	}
+}
 
-	PrefetchBuffer *prefetch.PriorityBuffer
+type DequeueWorker struct {
+	shard *db.ShardMeta
+	repo  messageSearcherUpdater
+
+	prefetchBuf *prefetch.PriorityBuffer
 
 	shutdown      chan chan error
 	topicBackoffs map[string]*wait.BackoffStrategy
@@ -129,7 +150,7 @@ func (w *DequeueWorker) Run() error {
 
 func (w *DequeueWorker) dequeueMessages(bo *wait.BackoffStrategy) error {
 	exclusions := excludedTopics(w.topicBackoffs)
-	msgs, err := w.MsgRepository.FindMessagesReadyForDelivery(w.Shard, false,
+	msgs, err := w.repo.FindMessagesReadyForDelivery(w.shard, false,
 		exclusions, prefetch.MaxPrefetchItemCount, db.WithLimit(dequeueBatchSize))
 	if err != nil {
 		return err
@@ -143,7 +164,7 @@ func (w *DequeueWorker) dequeueMessages(bo *wait.BackoffStrategy) error {
 
 	fetchedIds := w.sendToPrefetchBuffer(msgs)
 
-	tx, err := w.MsgRepository.UpdatePrefetchedBatch(w.Shard, fetchedIds, true)
+	tx, err := w.repo.UpdatePrefetchedBatch(w.shard, fetchedIds, true)
 	if err != nil {
 		return err
 	}
@@ -153,18 +174,18 @@ func (w *DequeueWorker) dequeueMessages(bo *wait.BackoffStrategy) error {
 }
 
 func (w *DequeueWorker) sendToPrefetchBuffer(items []domain.Message) []domain.UUID {
-	replyCh := make(chan []prefetch.PrefetchStatusCode)
+	replyCh := make(chan []prefetch.PrefetchResponseStatus)
 	defer close(replyCh)
 
 	envelope := prefetch.IngestEnvelope{Batch: items, RespCh: replyCh}
-	w.PrefetchBuffer.C() <- envelope
+	w.prefetchBuf.C() <- envelope
 
 	reply := <-replyCh
 
 	return w.processPrefetchResponse(items, reply)
 }
 
-func (w *DequeueWorker) processPrefetchResponse(items []domain.Message, reply []prefetch.PrefetchStatusCode) []domain.UUID {
+func (w *DequeueWorker) processPrefetchResponse(items []domain.Message, reply []prefetch.PrefetchResponseStatus) []domain.UUID {
 	fetchedIds := make([]domain.UUID, 0)
 	for i, r := range reply {
 		switch r {
@@ -207,11 +228,23 @@ type AckNackRequest struct {
 	Ack bool
 }
 
-type AckNackWorker struct {
-	ShardMgr      *db.ShardManager
-	MsgRepository messageAckNacker
+func NewAckNackWorker(mgr *db.ShardManager, buf chan AckNackRequest) *AckNackWorker {
+	ibuf := buf
+	if buf == nil {
+		ibuf = make(chan AckNackRequest, defaultChanSize)
+	}
+	return &AckNackWorker{
+		shardMgr: mgr,
+		repo:     &db.MessageRepository{},
+		buffer:   ibuf,
+	}
+}
 
-	Buffer chan AckNackRequest
+type AckNackWorker struct {
+	shardMgr *db.ShardManager
+	repo     messageAckNacker
+
+	buffer chan AckNackRequest
 
 	shutdown chan chan error
 }
@@ -230,9 +263,9 @@ func (w *AckNackWorker) Run() error {
 				respCh <- nil
 				return
 
-			case ackNack := <-w.Buffer:
-				shard := w.ShardMgr.Get(ackNack.Id.ShardId())
-				err := w.MsgRepository.AckNack(shard, ackNack.Id, ackNack.Ack)
+			case ackNack := <-w.buffer:
+				shard := w.shardMgr.Get(ackNack.Id.ShardId())
+				err := w.repo.AckNack(shard, ackNack.Id, ackNack.Ack)
 				if err != nil {
 					fmt.Println(err)
 				}

@@ -11,35 +11,43 @@ import (
 const (
 	MaxPrefetchItemCount        int = 20
 	defaultDequeueLimitPerTopic int = 20
+	defaultChanSize             int = 300
 )
 
-type PrefetchStatusCode int
+type PrefetchResponseStatus int
 
 const (
-	PrefetchStatusOk      PrefetchStatusCode = 0
-	PrefetchStatusBackoff PrefetchStatusCode = 1
+	PrefetchStatusOk      PrefetchResponseStatus = 0
+	PrefetchStatusBackoff PrefetchResponseStatus = 1
 )
 
-type DequeueRequest struct {
+type GetItemsRequest struct {
 	Namespace string
 	Topic     string
 	Limit     int
 	Timeout   time.Duration
 
-	replyCh chan<- DequeueResponse
+	replyCh chan<- GetItemsResponse
 }
 
-type DequeueResponse struct {
+type GetItemsResponse struct {
 	Messages []domain.Message
 }
 
 type IngestEnvelope struct {
 	Batch  []domain.Message
-	RespCh chan<- []PrefetchStatusCode
+	RespCh chan<- []PrefetchResponseStatus
+}
+
+func NewPriorityBuffer() *PriorityBuffer {
+	return &PriorityBuffer{
+		apiReqCh: make(chan GetItemsRequest, defaultChanSize),
+		ingestCh: make(chan IngestEnvelope, defaultChanSize),
+	}
 }
 
 type PriorityBuffer struct {
-	apiReqCh chan DequeueRequest
+	apiReqCh chan GetItemsRequest
 	ingestCh chan IngestEnvelope
 
 	// buffers contains one key per fetched topic.
@@ -49,9 +57,14 @@ type PriorityBuffer struct {
 	shutdown chan chan error
 }
 
+func (pb *PriorityBuffer) C() chan IngestEnvelope {
+	if pb.ingestCh == nil {
+		panic(fmt.Errorf("chan not initialized"))
+	}
+	return pb.ingestCh
+}
+
 func (pb *PriorityBuffer) Run() error {
-	pb.apiReqCh = make(chan DequeueRequest, 300)
-	pb.ingestCh = make(chan IngestEnvelope, 300)
 	pb.shutdown = make(chan chan error)
 
 	if pb.buffers == nil {
@@ -65,8 +78,6 @@ func (pb *PriorityBuffer) Run() error {
 func (pb *PriorityBuffer) serveLoop() {
 	cleanup := func() {
 		pb.buffers = nil
-		close(pb.apiReqCh)
-		close(pb.ingestCh)
 		close(pb.shutdown)
 	}
 	defer cleanup()
@@ -78,63 +89,68 @@ func (pb *PriorityBuffer) serveLoop() {
 			return
 
 		case envelope := <-pb.ingestCh:
-			reply := make([]PrefetchStatusCode, len(envelope.Batch))
-
-			for i := 0; i < len(envelope.Batch); i++ {
-				msg := envelope.Batch[i]
-				tHeap, ok := pb.buffers[msg.Topic]
-				if !ok {
-					newHeap := make(msgHeap, 0)
-					tHeap = &newHeap
-					heap.Init(tHeap)
-					pb.buffers[msg.Topic] = tHeap
-				}
-
-				if len(*tHeap) < MaxPrefetchItemCount {
-					heap.Push(tHeap, &msg)
-					reply[i] = PrefetchStatusOk
-				} else {
-					reply[i] = PrefetchStatusBackoff
-				}
-			}
+			reply := pb.processIngest(&envelope)
 			envelope.RespCh <- reply
 
 		case apiReq := <-pb.apiReqCh:
-			tHeap, ok := pb.buffers[apiReq.Topic]
-			if !ok {
-				apiReq.replyCh <- DequeueResponse{Messages: []domain.Message{}}
-				continue
-			}
-
-			limit := apiReq.Limit
-			if limit == 0 {
-				limit = defaultDequeueLimitPerTopic
-			}
-			n := min(len(*tHeap), limit)
-			prefetched := make([]domain.Message, n)
-			for i := 0; i < n; i++ {
-				item := heap.Pop(tHeap).(*domain.Message)
-				prefetched[i] = *item
-			}
-			apiReq.replyCh <- DequeueResponse{Messages: prefetched}
+			reply := pb.processGetItems(&apiReq)
+			apiReq.replyCh <- *reply
 		}
 	}
+}
+
+func (pb *PriorityBuffer) processGetItems(req *GetItemsRequest) *GetItemsResponse {
+	tHeap, ok := pb.buffers[req.Topic]
+	if !ok {
+		return &GetItemsResponse{Messages: []domain.Message{}}
+	}
+
+	limit := req.Limit
+	if limit == 0 {
+		limit = defaultDequeueLimitPerTopic
+	}
+	n := min(len(*tHeap), limit)
+
+	prefetched := make([]domain.Message, n)
+	for i := 0; i < n; i++ {
+		item := heap.Pop(tHeap).(*domain.Message)
+		prefetched[i] = *item
+	}
+	return &GetItemsResponse{Messages: prefetched}
+}
+
+func (pb *PriorityBuffer) processIngest(envelope *IngestEnvelope) []PrefetchResponseStatus {
+	reply := make([]PrefetchResponseStatus, len(envelope.Batch))
+
+	for i := 0; i < len(envelope.Batch); i++ {
+		msg := envelope.Batch[i]
+		tHeap, ok := pb.buffers[msg.Topic]
+		if !ok {
+			newHeap := make(msgHeap, 0)
+			tHeap = &newHeap
+			heap.Init(tHeap)
+			pb.buffers[msg.Topic] = tHeap
+		}
+
+		if len(*tHeap) < MaxPrefetchItemCount {
+			heap.Push(tHeap, &msg)
+			reply[i] = PrefetchStatusOk
+		} else {
+			reply[i] = PrefetchStatusBackoff
+		}
+	}
+	return reply
 }
 
 func (pb *PriorityBuffer) Stop() error {
 	errCh := make(chan error)
 	pb.shutdown <- errCh
-	fmt.Println("exiting")
 
 	return <-errCh
 }
 
-func (pb *PriorityBuffer) C() chan IngestEnvelope {
-	return pb.ingestCh
-}
-
-func (pb *PriorityBuffer) Dequeue(req *DequeueRequest) chan DequeueResponse {
-	respCh := make(chan DequeueResponse)
+func (pb *PriorityBuffer) GetItems(req *GetItemsRequest) chan GetItemsResponse {
+	respCh := make(chan GetItemsResponse)
 	req.replyCh = respCh
 
 	pb.apiReqCh <- *req
@@ -142,6 +158,8 @@ func (pb *PriorityBuffer) Dequeue(req *DequeueRequest) chan DequeueResponse {
 	return respCh
 }
 
+// msgHeap is an implementation of the heap.Interface that allows us to
+// store prefetched messages in a priority tree
 type msgHeap []*domain.Message
 
 func (mh msgHeap) Len() int {

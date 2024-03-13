@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuffer(t *testing.T) {
-	buf := &PriorityBuffer{}
+	buf := NewPriorityBuffer()
 	buf.Run()
 	defer buf.Stop()
 
@@ -20,7 +20,7 @@ func TestBuffer(t *testing.T) {
 	}
 
 	notificationCh := make(chan bool)
-	respCh := make(chan []PrefetchStatusCode)
+	respCh := make(chan []PrefetchResponseStatus)
 	buf.C() <- IngestEnvelope{Batch: testMessages, RespCh: respCh}
 	<-respCh
 	close(respCh)
@@ -28,12 +28,12 @@ func TestBuffer(t *testing.T) {
 	consumer := func() {
 		consumed := 0
 		for {
-			req := &DequeueRequest{
+			req := &GetItemsRequest{
 				Namespace: "ns",
 				Topic:     "test",
 			}
 
-			reply := <-buf.Dequeue(req)
+			reply := <-buf.GetItems(req)
 			consumed += len(reply.Messages)
 
 			lastPriority := -1

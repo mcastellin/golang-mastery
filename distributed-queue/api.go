@@ -203,7 +203,7 @@ func (hh *Handler) dequeueHandler(w http.ResponseWriter, req *http.Request) {
 			jsonResponse(w, http.StatusInternalServerError, H{"error": err.Error()})
 		}
 
-		r := &prefetch.DequeueRequest{
+		r := &prefetch.GetItemsRequest{
 			Namespace: dequeueReq.Namespace,
 			Topic:     dequeueReq.Topic,
 			Limit:     dequeueReq.Limit,
@@ -221,7 +221,7 @@ func (hh *Handler) dequeueHandler(w http.ResponseWriter, req *http.Request) {
 		for {
 			select {
 			case <-backoff.After():
-				resp := <-hh.DequeueBuffer.Dequeue(r)
+				resp := <-hh.DequeueBuffer.GetItems(r)
 				if len(resp.Messages) == 0 {
 					backoff.Backoff()
 					continue
