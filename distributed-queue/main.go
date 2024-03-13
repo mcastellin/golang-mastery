@@ -10,6 +10,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/db"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/queue"
 )
 
 const defaultBufferSize int = 500
@@ -30,7 +31,7 @@ type httpServer interface {
 }
 
 type workerStarterStopper interface {
-	Run()
+	Run() error
 	Stop() error
 }
 
@@ -44,9 +45,10 @@ func (a *App) AddWorker(w workerStarterStopper) {
 }
 
 func (a *App) Run() error {
-
 	for _, w := range a.workers {
-		go w.Run()
+		if err := w.Run(); err != nil {
+			return err
+		}
 		defer w.Stop()
 	}
 
@@ -69,8 +71,8 @@ func main() {
 	}
 	defer mgr.Close()
 
-	enqueueBuf := make(chan EnqueueRequest, defaultBufferSize)
-	ackNackBuf := make(chan AckNackRequest, defaultBufferSize)
+	enqueueBuf := make(chan queue.EnqueueRequest, defaultBufferSize)
+	ackNackBuf := make(chan queue.AckNackRequest, defaultBufferSize)
 
 	msgRepo := &db.MessageRepository{}
 
@@ -78,11 +80,11 @@ func main() {
 	app.AddWorker(prefetchBuf)
 	// TODO we should have one wAckNack worker per shard and put a router in
 	// front to forward the request to the right worker
-	app.AddWorker(&AckNackWorker{ShardMgr: mgr, MsgRepository: msgRepo, Buffer: ackNackBuf})
+	app.AddWorker(&queue.AckNackWorker{ShardMgr: mgr, MsgRepository: msgRepo, Buffer: ackNackBuf})
 
 	for _, shard := range mgr.Shards() {
-		app.AddWorker(&EnqueueWorker{Shard: shard, MsgRepository: msgRepo, Buffer: enqueueBuf})
-		app.AddWorker(&DequeueWorker{Shard: shard, MsgRepository: msgRepo, PrefetchBuffer: prefetchBuf})
+		app.AddWorker(&queue.EnqueueWorker{Shard: shard, MsgRepository: msgRepo, Buffer: enqueueBuf})
+		app.AddWorker(&queue.DequeueWorker{Shard: shard, MsgRepository: msgRepo, PrefetchBuffer: prefetchBuf})
 	}
 
 	var version string

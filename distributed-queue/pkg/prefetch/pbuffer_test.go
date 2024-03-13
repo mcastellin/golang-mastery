@@ -9,7 +9,8 @@ import (
 
 func TestBuffer(t *testing.T) {
 	buf := &PriorityBuffer{}
-	buf.Serve()
+	buf.Run()
+	defer buf.Stop()
 
 	testMessages := []domain.Message{
 		{Topic: "test", Priority: 10},

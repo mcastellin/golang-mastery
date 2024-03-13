@@ -78,7 +78,7 @@ func (r *MessageRepository) Save(shard *ShardMeta, item *domain.Message) error {
 	).Scan(&item.Id)
 }
 
-func (r *MessageRepository) Ack(shard *ShardMeta, uid domain.UUID, ack bool) error {
+func (r *MessageRepository) AckNack(shard *ShardMeta, uid domain.UUID, ack bool) error {
 	var statement string
 	if ack {
 		statement = `DELETE FROM messages WHERE id = $1`

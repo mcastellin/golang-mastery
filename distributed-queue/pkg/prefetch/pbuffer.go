@@ -2,6 +2,7 @@ package prefetch
 
 import (
 	"container/heap"
+	"fmt"
 	"time"
 
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
@@ -48,19 +49,24 @@ type PriorityBuffer struct {
 	shutdown chan chan error
 }
 
-func (pb *PriorityBuffer) Run() {
+func (pb *PriorityBuffer) Run() error {
 	pb.apiReqCh = make(chan DequeueRequest, 300)
 	pb.ingestCh = make(chan IngestEnvelope, 300)
+	pb.shutdown = make(chan chan error)
+
 	if pb.buffers == nil {
 		pb.buffers = map[string]*msgHeap{}
 	}
-
 	go pb.serveLoop()
+
+	return nil
 }
 
 func (pb *PriorityBuffer) serveLoop() {
-	pb.shutdown = make(chan chan error)
 	cleanup := func() {
+		pb.buffers = nil
+		close(pb.apiReqCh)
+		close(pb.ingestCh)
 		close(pb.shutdown)
 	}
 	defer cleanup()
@@ -72,7 +78,6 @@ func (pb *PriorityBuffer) serveLoop() {
 			return
 
 		case envelope := <-pb.ingestCh:
-
 			reply := make([]PrefetchStatusCode, len(envelope.Batch))
 
 			for i := 0; i < len(envelope.Batch); i++ {
@@ -119,6 +124,7 @@ func (pb *PriorityBuffer) serveLoop() {
 func (pb *PriorityBuffer) Stop() error {
 	errCh := make(chan error)
 	pb.shutdown <- errCh
+	fmt.Println("exiting")
 
 	return <-errCh
 }
