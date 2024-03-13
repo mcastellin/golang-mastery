@@ -11,6 +11,7 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/db"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
+	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/queue"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/wait"
 )
 
@@ -64,9 +65,9 @@ type Handler struct {
 	MainShard     *db.ShardMeta
 	NamespaceRepo namespaceGetterCreator
 
-	EnqueueBuffer chan EnqueueRequest
+	EnqueueBuffer chan queue.EnqueueRequest
 	DequeueBuffer *prefetch.PriorityBuffer
-	AckNackBuffer chan<- AckNackRequest
+	AckNackBuffer chan<- queue.AckNackRequest
 }
 
 func (hh *Handler) getNamespacesHandler(w http.ResponseWriter, r *http.Request) {
@@ -157,8 +158,8 @@ func (hh *Handler) enqueueHandler(w http.ResponseWriter, r *http.Request) {
 		TTL:          req.TTLSeconds * time.Second,
 	}
 
-	respCh := make(chan EnqueueResponse)
-	hh.EnqueueBuffer <- EnqueueRequest{
+	respCh := make(chan queue.EnqueueResponse)
+	hh.EnqueueBuffer <- queue.EnqueueRequest{
 		Msg:    msg,
 		RespCh: respCh,
 	}
@@ -273,7 +274,7 @@ func (hh *Handler) ackNackHandler(w http.ResponseWriter, req *http.Request) {
 			fmt.Println(err)
 			continue
 		}
-		req := AckNackRequest{Id: *uid, Ack: ack.Ack}
+		req := queue.AckNackRequest{Id: *uid, Ack: ack.Ack}
 		hh.AckNackBuffer <- req
 	}
 }
