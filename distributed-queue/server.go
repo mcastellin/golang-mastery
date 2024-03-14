@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 type H map[string]any
@@ -23,9 +24,13 @@ func (c *ApiCtx) JsonResponse(statusCode int, v H) error {
 }
 
 func NewApiServer(addr string, basePath string) *ApiServer {
+	prefixedBase, err := url.JoinPath(basePath, "/")
+	if err != nil {
+		prefixedBase = basePath
+	}
 	return &ApiServer{
 		addr:     addr,
-		basePath: basePath,
+		basePath: prefixedBase,
 		router:   map[string]func(*ApiCtx){},
 	}
 }
@@ -41,7 +46,12 @@ func (s *ApiServer) HandleFunc(method string, path string, fn func(*ApiCtx)) {
 	if s.mux == nil {
 		s.mux = http.NewServeMux()
 	}
-	key := routerKey(method, path)
+	fullPath, err := url.JoinPath(s.basePath, path)
+	if err != nil {
+		// TODO log this out
+		fullPath = path
+	}
+	key := routerKey(method, fullPath)
 	s.router[key] = fn
 }
 

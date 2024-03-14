@@ -38,10 +38,15 @@ type workerStarterStopper interface {
 type App struct {
 	server  httpServer
 	workers []workerStarterStopper
+	cleanup func()
 }
 
 func (a *App) AddWorker(w workerStarterStopper) {
 	a.workers = append(a.workers, w)
+}
+
+func (a *App) SetCleanupFn(cleanup func()) {
+	a.cleanup = cleanup
 }
 
 func (a *App) Run() error {
@@ -52,6 +57,10 @@ func (a *App) Run() error {
 		defer w.Stop()
 	}
 
+	if a.cleanup != nil {
+		defer a.cleanup()
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -59,7 +68,7 @@ func (a *App) Run() error {
 	return a.server.Serve(ctx)
 }
 
-func main() {
+func createApp(bindAddr string) *App {
 	app := &App{}
 
 	mgr := &db.ShardManager{}
@@ -69,7 +78,9 @@ func main() {
 			panic(err)
 		}
 	}
-	defer mgr.Close()
+	app.SetCleanupFn(func() {
+		defer mgr.Close()
+	})
 
 	enqueueBuffer := make(chan queue.EnqueueRequest, defaultBufferSize)
 
@@ -99,14 +110,26 @@ func main() {
 		AckNackRouter: ackNackRouter,
 	}
 
-	api := NewApiServer(":8080", "/")
+	api := NewApiServer(bindAddr, "/")
 	api.HandleFunc(http.MethodGet, "/ns", nsService.HandleGetNamespaces)
 	api.HandleFunc(http.MethodPost, "/ns", nsService.HandleCreateNamespace)
 	api.HandleFunc(http.MethodPost, "/message/enqueue", msgService.HandleEnqueue)
 	api.HandleFunc(http.MethodPost, "/message/dequeue", msgService.HandleDequeue)
 	api.HandleFunc(http.MethodPost, "/message/ack", msgService.HandleAckNack)
-
 	app.server = api
+
+	return app
+}
+
+func main() {
+
+	addr := os.Getenv("BIND_ADDR")
+	if len(addr) == 0 {
+		addr = ":8080"
+	}
+
+	app := createApp(addr)
+
 	if err := app.Run(); err != nil {
 		panic(err)
 	}

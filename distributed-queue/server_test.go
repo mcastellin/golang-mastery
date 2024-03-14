@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 )
 
-func TestApiServer(t *testing.T) {
+func TestApiServerConcurrency(t *testing.T) {
 	notifyCh := make(chan struct{})
 
-	api := NewApiServer(":9999", "/")
+	port := bindAvailablePort(t)
+	bindAddr := fmt.Sprintf(":%d", port)
+	api := NewApiServer(bindAddr, "/")
 	api.HandleFunc(http.MethodGet, "/test", func(c *ApiCtx) {
 		time.Sleep(100 * time.Millisecond)
 		notifyCh <- struct{}{}
@@ -24,11 +27,13 @@ func TestApiServer(t *testing.T) {
 	numConcurrent := 100
 	for i := 0; i < numConcurrent; i++ {
 		go func() {
-			req, err := http.NewRequest(http.MethodGet, "http://localhost:9999/test", nil)
+			url := fmt.Sprintf("http://localhost:%d/test", port)
+			req, err := http.NewRequest(http.MethodGet, url, nil)
 			if err != nil {
 				panic(err)
 			}
-			if _, err := http.DefaultClient.Do(req); err != nil {
+			cli := http.Client{Timeout: time.Second}
+			if _, err := cli.Do(req); err != nil {
 				panic(err)
 			}
 		}()
@@ -46,4 +51,39 @@ func TestApiServer(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestApiServerBaseUrl(t *testing.T) {
+
+	port := bindAvailablePort(t)
+	bindAddr := fmt.Sprintf(":%d", port)
+	api := NewApiServer(bindAddr, "/base")
+	api.HandleFunc(http.MethodGet, "/test/path", func(c *ApiCtx) {
+		c.JsonResponse(http.StatusOK, H{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go api.Serve(ctx)
+
+	url := fmt.Sprintf("http://localhost:%d/base/test/path", port)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cli := http.Client{Timeout: time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("returned status code %d, expected %d", resp.StatusCode, 200)
+	}
+}
+
+func bindAvailablePort(t testing.TB) int {
+	return 9999
 }
