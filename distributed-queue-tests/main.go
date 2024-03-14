@@ -6,18 +6,16 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 )
 
-const numNamespaces int = 1
-
-const target int = 1000000
-
-const defaultTimeout = 20 * time.Second
-
-const baseUrl = "http://localhost:8080"
-
-var topics = []string{"test", "one", "there-it-is", "one-two-three-zero", "another-one", "done", "my", "research", "on", "this", "one", "is", "very", "nice", "and", "tasty", "task"}
+const (
+	target         int = 1000000
+	defaultTimeout     = 20 * time.Second
+	baseUrl            = "http://localhost:8080"
+	numTopics          = 50
+)
 
 var (
 	urlCreateNs       = fmt.Sprintf("%s/ns", baseUrl)
@@ -27,42 +25,56 @@ var (
 	urlAckMessage     = fmt.Sprintf("%s/message/ack", baseUrl)
 )
 
-func createNamespaces() ([]string, error) {
+func main() {
+
+	ns := "default"
+	nsId, err := createNamespace(ns)
+	if err != nil {
+		panic(err)
+	}
+
+	topics := make([]string, numTopics)
+	for i := 0; i < numTopics; i++ {
+		topics[i] = generateName(50)
+	}
+
+	if err := attack(*nsId, topics); err != nil {
+		panic(err)
+	}
+}
+
+func createNamespace(name string) (*string, error) {
 	cli := &http.Client{
 		Timeout: defaultTimeout,
 	}
 
-	namespaces := []string{}
-
-	for i := 0; i < numNamespaces; i++ {
-		payload, err := json.Marshal(map[string]any{
-			"name": fmt.Sprintf("test-ns-%d", i+1),
-		})
-		if err != nil {
-			return nil, err
-		}
-		req, err := http.NewRequest(http.MethodPost, urlCreateNs, bytes.NewReader(payload))
-		if err != nil {
-			return nil, err
-		}
-		response, err := cli.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		var reply map[string]string
-		err = json.NewDecoder(response.Body).Decode(&reply)
-		if err != nil {
-			return nil, err
-		}
-
-		namespaces = append(namespaces, reply["id"])
+	payload, err := json.Marshal(map[string]any{"name": name})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, urlCreateNs, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	response, err := cli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode != 200 {
+		return nil, fmt.Errorf("error creating namespace")
 	}
 
-	return namespaces, nil
+	var reply map[string]string
+	err = json.NewDecoder(response.Body).Decode(&reply)
+	if err != nil {
+		return nil, err
+	}
+
+	nsId := reply["id"]
+	return &nsId, nil
 }
 
-func attack(namespaces []string) error {
+func attack(namespace string, topics []string) error {
 	closingCh := make(chan struct{})
 
 	attackFn := func(idx int) {
@@ -73,7 +85,7 @@ func attack(namespaces []string) error {
 				return
 			default:
 				payload, err := json.Marshal(map[string]any{
-					"namespace":           namespaces[0],
+					"namespace":           namespace,
 					"topic":               topics[idx],
 					"priority":            rand.Intn(100),
 					"payload":             "asdfasdfasdf",
@@ -114,13 +126,13 @@ func attack(namespaces []string) error {
 	notifyCh := make(chan int)
 	for i := 0; i < len(topics); i++ {
 		go attackFn(i)
-		go consumer(notifyCh, i)
+		go consumer(notifyCh, namespace, topics[i])
 	}
 
 	start := time.Now()
 	total := 0
 
-	checkpoint := 100
+	checkpoint := 1000
 	for count := range notifyCh {
 		total += count
 		if total >= target {
@@ -141,14 +153,14 @@ func attack(namespaces []string) error {
 	return nil
 }
 
-func consumer(notifyCh chan<- int, topicIdx int) {
+func consumer(notifyCh chan<- int, namespace, topic string) {
 	for {
 		body := struct {
 			Namespace      string `json:"namespace"`
 			Topic          string `json:"topic"`
 			Limit          int    `json:"limit"`
 			TimeoutSeconds int    `json:"timeoutSeconds"`
-		}{"ns", topics[topicIdx], 10, 20}
+		}{namespace, topic, 10, 20}
 
 		payload, _ := json.Marshal(body)
 		cli := http.Client{Timeout: 30 * time.Second}
@@ -201,16 +213,14 @@ func ack(msgId string, v bool) {
 	cli.Do(req)
 }
 
-func main() {
-
-	namespaces, err := createNamespaces()
-	if err != nil {
-		panic(err)
+// generateName creates a random string of a specified length.
+func generateName(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var output strings.Builder
+	for i := 0; i < length; i++ {
+		randomIndex := rand.Intn(len(charset))
+		randomChar := charset[randomIndex]
+		output.WriteByte(randomChar)
 	}
-
-	fmt.Println("created namespaces")
-	err = attack(namespaces)
-	if err != nil {
-		panic(err)
-	}
+	return output.String()
 }
