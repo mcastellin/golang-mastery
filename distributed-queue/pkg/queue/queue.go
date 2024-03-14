@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	dequeueBatchSize       = 100
-	backoffInitialDuration = 10 * time.Millisecond
-	backoffMaxDuration     = 5 * time.Second
-	backoffFactor          = 2
-	defaultChanSize        = 300
+	dequeueBatchSize             = 100
+	backoffInitialDuration       = 10 * time.Millisecond
+	backoffMaxDuration           = 5 * time.Second
+	backoffFactor                = 2
+	defaultChanSize              = 300
+	responseCommunicationTimeout = 100 * time.Millisecond
 )
 
 type messageSaver interface {
@@ -42,6 +43,7 @@ type EnqueueRequest struct {
 	RespCh chan<- EnqueueResponse
 }
 
+// NewEnqueueWorker creates a new EnqueueWorker
 func NewEnqueueWorker(shard *db.ShardMeta, buf chan EnqueueRequest) *EnqueueWorker {
 	ibuf := buf
 	if ibuf == nil {
@@ -54,6 +56,14 @@ func NewEnqueueWorker(shard *db.ShardMeta, buf chan EnqueueRequest) *EnqueueWork
 	}
 }
 
+// EnqueueWorker implements the worker interface to ingest enqueue requests received
+// from producers (clients) and store them into the managed database shard.
+//
+// I used workers instead of having http handlers directly creating new message records
+// to control the amount of concurrent clients that communicate with the database simultaneously.
+// API clients can drop the EnqueueRequest into a single buffer and workers will handle the
+// record creation asynchronously, one at a time.
+// A response is then sent to the caller using the RespCh included in the request.
 type EnqueueWorker struct {
 	shard *db.ShardMeta
 	repo  messageSaver
@@ -78,8 +88,21 @@ func (w *EnqueueWorker) Run() error {
 				return
 
 			case enqReq := <-w.buffer:
+				if enqReq.RespCh == nil {
+					// response channel not set. Discarding request
+					continue
+				}
+
 				reply := w.enqueueMessage(&enqReq.Msg)
-				enqReq.RespCh <- reply
+
+				timer := time.NewTimer(responseCommunicationTimeout)
+				select {
+				case enqReq.RespCh <- reply:
+					timer.Stop()
+				case <-timer.C:
+					// client probably died and didn't pick up the response. Proceeding.
+					continue
+				}
 			}
 		}
 	}
@@ -104,6 +127,7 @@ func (w *EnqueueWorker) Stop() error {
 	return <-errCh
 }
 
+// NewDequeueWorker creates a new DequeueWorker
 func NewDequeueWorker(shard *db.ShardMeta, buf *prefetch.PriorityBuffer) *DequeueWorker {
 	return &DequeueWorker{
 		shard:       shard,
@@ -112,6 +136,15 @@ func NewDequeueWorker(shard *db.ShardMeta, buf *prefetch.PriorityBuffer) *Dequeu
 	}
 }
 
+// DequeueWorker implements the worker interface to continuously dequeue messages from the
+// database that are ready for delivery.
+// On each round, the dequeue worker will fetch messages that met delivery conditions from
+// the database. The amount of messages retrieve is bound both globally (overall amount of
+// rows fetched) and by topic (at most the N items for every topic sorted by priority).
+// The worker will then send messages as part of an ingest request to the PrefetchBuffer.
+//
+// If the prefetch buffer is full, it can send a "backoff" response to ask workers to slow
+// down message retrieval from the database for specific topics.
 type DequeueWorker struct {
 	shard *db.ShardMeta
 	repo  messageSearcherUpdater
@@ -228,6 +261,7 @@ type AckNackRequest struct {
 	Ack bool
 }
 
+// NewAckNackWorker creates a new AckNackWorker
 func NewAckNackWorker(shard *db.ShardMeta, buf chan AckNackRequest) *AckNackWorker {
 	ibuf := buf
 	if buf == nil {
@@ -240,6 +274,10 @@ func NewAckNackWorker(shard *db.ShardMeta, buf chan AckNackRequest) *AckNackWork
 	}
 }
 
+// AckNackWorker implements the worker interface to process ACK and NACK requests to messages from API clients.
+// Every message consumer has to acknowledge the outcome of a message processing with either an ACK or NACK.
+// Because of the sheer amount of ack/nack messages received by the distributed queue, we cannot have http
+// handlers updating records in database shards. This operation is handled asynchronously by the worker.
 type AckNackWorker struct {
 	shard *db.ShardMeta
 	repo  messageAckNacker
@@ -282,10 +320,15 @@ func (w *AckNackWorker) Stop() error {
 	return <-errCh
 }
 
+// AckNackRouter is responsible for routing an ack/nack request to the correct AckNackWorker
+// that can update correct database shard where the message is stored.
+// To handle the routing smoothly, we use UUID keys for messages that include shard identification
+// so we can route request with a simple map lookup.
 type AckNackRouter struct {
 	routes map[uint32]chan<- AckNackRequest
 }
 
+// RegisterWorker registers a new worker into the router.
 func (r *AckNackRouter) RegisterWorker(shardId uint32, w *AckNackWorker) {
 	if r.routes == nil {
 		r.routes = map[uint32]chan<- AckNackRequest{}
@@ -293,6 +336,7 @@ func (r *AckNackRouter) RegisterWorker(shardId uint32, w *AckNackWorker) {
 	r.routes[shardId] = w.buffer
 }
 
+// Route an incoming ack/nack request to the correct worker buffer for processing.
 func (r *AckNackRouter) Route(uid *domain.UUID, req AckNackRequest) error {
 	wChan, ok := r.routes[uid.ShardId()]
 	if !ok {

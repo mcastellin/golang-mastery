@@ -140,9 +140,11 @@ func (pb *PriorityBuffer) serveLoop() {
 
 			reply := pb.processGetItems(&apiReq)
 
+			timer := time.NewTimer(responseCommunicationTimeout)
 			select {
 			case apiReq.replyCh <- *reply:
-			case <-time.After(responseCommunicationTimeout):
+				timer.Stop()
+			case <-timer.C:
 				// Delivery failed. Avoid blocking loop.
 				// Once msg lease expires will be fetched again for delivery
 				// if supported.
