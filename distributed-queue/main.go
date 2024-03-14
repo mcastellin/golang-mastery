@@ -11,6 +11,7 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/db"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/queue"
+	"go.uber.org/zap"
 )
 
 var shardConfs = []struct {
@@ -36,6 +37,7 @@ type workerStarterStopper interface {
 }
 
 type App struct {
+	logger  *zap.Logger
 	server  httpServer
 	workers []workerStarterStopper
 	cleanup func()
@@ -68,8 +70,8 @@ func (a *App) Run() error {
 	return a.server.Serve(ctx)
 }
 
-func createApp(bindAddr string) *App {
-	app := &App{}
+func createApp(bindAddr string, logger *zap.Logger) *App {
+	app := &App{logger: logger}
 
 	mgr := &db.ShardManager{}
 	for _, c := range shardConfs {
@@ -123,12 +125,16 @@ func createApp(bindAddr string) *App {
 
 func main() {
 
+	logger := zap.Must(zap.NewProduction())
+	defer logger.Sync()
+	logger.Info("application starting: distributed-queue")
+
 	addr := os.Getenv("BIND_ADDR")
 	if len(addr) == 0 {
 		addr = ":8080"
 	}
 
-	app := createApp(addr)
+	app := createApp(addr, logger)
 
 	if err := app.Run(); err != nil {
 		panic(err)

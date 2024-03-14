@@ -97,7 +97,7 @@ func (s *MessagesService) HandleEnqueue(c *ApiCtx) {
 	}
 	ns := &domain.Namespace{Id: *nsuid}
 	// TODO need to replicate this in every shard to maintain performance
-	// for now just disabling queue verification
+	// for now just disabling namespace verification
 	//
 	//err = q.Get(hh.MainShard)
 	//if errors.Is(err, sql.ErrNoRows) {
