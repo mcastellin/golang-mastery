@@ -20,7 +20,7 @@ Here's a list of the projects I've been working on. In you're interested in any 
         - implementation of the [Gossip protocol](https://en.wikipedia.org/wiki/Gossip_protocol) to maintain cluster membership information for distributed applications
 - [x] [dns-server](/dns-server/)
         - implementation of a toy DNS server capable of serving DNS requests from A-type records stored locally or forwarding requests to authoritative servers upstream
-- [ ] [distributed-queue](/distributed-queue/)
+- [x] [distributed-queue](/distributed-queue/) An implementation of a distributed queue based on [FOQS](https://engineering.fb.com/2021/02/22/production-engineering/foqs-scaling-a-distributed-priority-queue/) (Facebook Ordered Queuing Service) 
 
 
 ## Future project ideas
@@ -29,3 +29,5 @@ Here's a list of the projects I've been working on. In you're interested in any 
 * Add a `testHook` to dns-server application to enable testing of complex scenarios with simulated latency and response failures
 * Extend dns-server application to add the ability to cache DNS responses received from upstream servers for their TTL duration
 * Refactor gossip protocol to exchange gossip rounds using UDP multicasting to maximise network performance
+* Extend the distributed queue with account management. Implement authentication and access control so an account can only interact with its own namespaces.
+* Instrument distributed-queue application with OpenTelemetry

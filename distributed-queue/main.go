@@ -14,6 +14,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// TODO
+// shard configuration is fixed for now. Once I implement scale-out logic to dynamically add
+// and remove shards to ShardManager db connections be auto-discovered by the system.
 var shardConfs = []struct {
 	Id         uint32
 	Main       bool
