@@ -5,30 +5,41 @@ import (
 	"fmt"
 )
 
+// ShardMeta represents a connected database shard
 type ShardMeta struct {
 	Id         uint32
 	ConnString string
 
-	conn   *sql.DB
-	master bool
+	conn *sql.DB
+	main bool
 }
 
+// Conn returns an active sql.DB connection that can be used to
+// communicate with the shard
 func (meta *ShardMeta) Conn() *sql.DB {
 	return meta.conn
 }
 
 func (m *ShardMeta) initialize() error {
 
-	// TODO store shard information in a table
+	// TODO read shard information from database
+	// at the moment shards are added using fixed configuration
+	// but this is not scalabe. We need to allow adding and removing
+	// shards dynamically for horizontal scaling the service.
+	// This means that information about the shardId and its content
+	// should live inside the database and loaded using this function
+	// after the initial connection.
 	return nil
 }
 
+// ShardManager maintains the state of active database shards
 type ShardManager struct {
 	shards []*ShardMeta
 	index  map[uint32]*ShardMeta
 }
 
-func (m *ShardManager) Add(shardId uint32, master bool, connString string) (*ShardMeta, error) {
+// Add a connection to an existing database shard
+func (m *ShardManager) Add(shardId uint32, main bool, connString string) (*ShardMeta, error) {
 	dbConn, err := sql.Open("postgres", connString)
 	if err != nil {
 		return nil, err
@@ -38,7 +49,7 @@ func (m *ShardManager) Add(shardId uint32, master bool, connString string) (*Sha
 		Id:         shardId,
 		ConnString: connString,
 		conn:       dbConn,
-		master:     master,
+		main:       main,
 	}
 	if err := meta.initialize(); err != nil {
 		meta.conn.Close() // bad shard initialization: closing
@@ -54,23 +65,28 @@ func (m *ShardManager) Add(shardId uint32, master bool, connString string) (*Sha
 	return meta, nil
 }
 
+// Shards returns the list of active ShardMeta
 func (m *ShardManager) Shards() []*ShardMeta {
 	return m.shards
 }
 
+// Get an active shard by its ID
 func (m *ShardManager) Get(id uint32) *ShardMeta {
 	return m.index[id]
 }
 
-func (m *ShardManager) Master() *ShardMeta {
+// MainShard returns the shard that acts as a "main" to store common
+// non-sharded information
+func (m *ShardManager) MainShard() *ShardMeta {
 	for _, m := range m.shards {
-		if m.master {
+		if m.main {
 			return m
 		}
 	}
 	return nil
 }
 
+// Close all active connections to shards
 func (m *ShardManager) Close() {
 	for _, meta := range m.shards {
 		if err := meta.Conn().Close(); err != nil {

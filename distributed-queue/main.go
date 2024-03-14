@@ -15,7 +15,7 @@ import (
 
 var shardConfs = []struct {
 	Id         uint32
-	Master     bool
+	Main       bool
 	ConnString string
 }{
 	{uint32(10), true, "postgres://user:changeme@localhost:5431/foqs?sslmode=disable"},
@@ -73,7 +73,7 @@ func createApp(bindAddr string) *App {
 
 	mgr := &db.ShardManager{}
 	for _, c := range shardConfs {
-		_, err := mgr.Add(c.Id, c.Master, c.ConnString)
+		_, err := mgr.Add(c.Id, c.Main, c.ConnString)
 		if err != nil {
 			panic(err)
 		}
@@ -101,7 +101,7 @@ func createApp(bindAddr string) *App {
 	}
 
 	nsService := &NamespaceService{
-		MainShard:    mgr.Master(),
+		MainShard:    mgr.MainShard(),
 		NsRepository: &db.NamespaceRepository{},
 	}
 	msgService := &MessagesService{
