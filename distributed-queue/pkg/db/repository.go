@@ -8,6 +8,7 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 )
 
+// NamespaceRepository has methods to handle database operations for Namespace objects.
 type NamespaceRepository struct{}
 
 func (r *NamespaceRepository) Save(shard *ShardMeta, item *domain.Namespace) error {
@@ -52,6 +53,7 @@ func (r *NamespaceRepository) FindAll(shard *ShardMeta, fns ...OptsFn) ([]domain
 	return vals, nil
 }
 
+// MessageRepository has methods to handle database operations for Message objects.
 type MessageRepository struct{}
 
 func (r *MessageRepository) Save(shard *ShardMeta, item *domain.Message) error {
