@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -70,6 +72,8 @@ func (s *NamespaceService) HandleGetNamespaces(c *ApiCtx) {
 
 type MessagesService struct {
 	Logger        *zap.Logger
+	MainShard     *db.ShardMeta
+	NsRepository  *db.NamespaceRepository
 	EnqueueBuffer chan queue.EnqueueRequest
 	DequeueBuffer *prefetch.PriorityBuffer
 	AckNackRouter *queue.AckNackRouter
@@ -92,23 +96,14 @@ func (s *MessagesService) HandleEnqueue(c *ApiCtx) {
 		return
 	}
 
-	nsuid, err := domain.ParseUUID(req.Namespace)
-	if err != nil {
-		c.JsonResponse(http.StatusInternalServerError, H{"status": err.Error()})
+	ns, err := s.NsRepository.CachedFindByStringId(s.MainShard, req.Namespace)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JsonResponse(http.StatusNotFound, H{"error": "invalid namespace"})
+		return
+	} else if err != nil {
+		c.JsonResponse(http.StatusInternalServerError, H{"error": err.Error()})
 		return
 	}
-	ns := &domain.Namespace{Id: *nsuid}
-	// TODO need to replicate this in every shard to maintain performance
-	// for now just disabling namespace verification
-	//
-	//err = q.Get(hh.MainShard)
-	//if errors.Is(err, sql.ErrNoRows) {
-	//jsonResponse(w, H{"error": "invalid queue"})
-	//return
-	//} else if err != nil {
-	//jsonResponse(w, H{"error": err.Error()})
-	//return
-	//}
 
 	msg := domain.Message{
 		Namespace:    ns,

@@ -6,16 +6,46 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
+	objcache "github.com/mcastellin/golang-mastery/objects-cache"
 )
 
+const (
+	cacheTTLDuration = time.Minute
+	cacheMaxObjects  = 500
+)
+
+func NewNamespaceRepository() *NamespaceRepository {
+	c := objcache.NewObjectsCache(cacheMaxObjects, cacheTTLDuration)
+	return &NamespaceRepository{
+		itemsCache: c,
+	}
+}
+
 // NamespaceRepository has methods to handle database operations for Namespace objects.
-type NamespaceRepository struct{}
+type NamespaceRepository struct {
+	itemsCache *objcache.ObjectsCache
+}
 
 func (r *NamespaceRepository) Save(shard *ShardMeta, item *domain.Namespace) error {
 	statement := "INSERT INTO namespaces (id, name) VALUES ($1, $2) RETURNING id"
 
 	newUid := domain.NewUUID(shard.Id)
 	return shard.Conn().QueryRow(statement, newUid.Bytes(), item.Name).Scan(&item.Id)
+}
+
+// CachedFindByStringId finds a Namespace by Id
+// TODO add proper comment
+func (r *NamespaceRepository) CachedFindByStringId(shard *ShardMeta, id string) (*domain.Namespace, error) {
+	item := r.itemsCache.Get(id)
+	if item == nil {
+		v, err := r.FindByStringId(shard, id)
+		if err != nil {
+			return v, err
+		}
+		item = r.itemsCache.Put(v.Id.String(), v)
+	}
+
+	return item.Value.(*domain.Namespace), nil
 }
 
 func (r *NamespaceRepository) FindByStringId(shard *ShardMeta, id string) (*domain.Namespace, error) {

@@ -110,13 +110,16 @@ func createApp(bindAddr string, logger *zap.Logger) *App {
 		ackNackRouter.RegisterWorker(shard.Id, ackNackW)
 	}
 
+	nsRepository := db.NewNamespaceRepository()
 	nsService := &NamespaceService{
 		Logger:       logger,
 		MainShard:    mgr.MainShard(),
-		NsRepository: &db.NamespaceRepository{},
+		NsRepository: nsRepository,
 	}
 	msgService := &MessagesService{
 		Logger:        logger,
+		MainShard:     mgr.MainShard(),
+		NsRepository:  nsRepository,
 		EnqueueBuffer: enqueueBuffer,
 		DequeueBuffer: prefetchBuf,
 		AckNackRouter: ackNackRouter,
