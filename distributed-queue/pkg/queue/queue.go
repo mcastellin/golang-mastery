@@ -9,6 +9,7 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/wait"
+	"go.uber.org/zap"
 )
 
 const (
@@ -45,12 +46,13 @@ type EnqueueRequest struct {
 }
 
 // NewEnqueueWorker creates a new EnqueueWorker
-func NewEnqueueWorker(shard *db.ShardMeta, buf chan EnqueueRequest) *EnqueueWorker {
+func NewEnqueueWorker(shard *db.ShardMeta, buf chan EnqueueRequest, logger *zap.Logger) *EnqueueWorker {
 	ibuf := buf
 	if ibuf == nil {
 		ibuf = make(chan EnqueueRequest, defaultChanSize)
 	}
 	return &EnqueueWorker{
+		logger: logger,
 		shard:  shard,
 		repo:   &db.MessageRepository{},
 		buffer: ibuf,
@@ -66,8 +68,9 @@ func NewEnqueueWorker(shard *db.ShardMeta, buf chan EnqueueRequest) *EnqueueWork
 // record creation asynchronously, one at a time.
 // A response is then sent to the caller using the RespCh included in the request.
 type EnqueueWorker struct {
-	shard *db.ShardMeta
-	repo  messageSaver
+	logger *zap.Logger
+	shard  *db.ShardMeta
+	repo   messageSaver
 
 	buffer chan EnqueueRequest
 
@@ -129,8 +132,9 @@ func (w *EnqueueWorker) Stop() error {
 }
 
 // NewDequeueWorker creates a new DequeueWorker
-func NewDequeueWorker(shard *db.ShardMeta, buf *prefetch.PriorityBuffer) *DequeueWorker {
+func NewDequeueWorker(shard *db.ShardMeta, buf *prefetch.PriorityBuffer, logger *zap.Logger) *DequeueWorker {
 	return &DequeueWorker{
+		logger:      logger,
 		shard:       shard,
 		repo:        &db.MessageRepository{},
 		prefetchBuf: buf,
@@ -147,8 +151,9 @@ func NewDequeueWorker(shard *db.ShardMeta, buf *prefetch.PriorityBuffer) *Dequeu
 // If the prefetch buffer is full, it can send a "backoff" response to ask workers to slow
 // down message retrieval from the database for specific topics.
 type DequeueWorker struct {
-	shard *db.ShardMeta
-	repo  messageSearcherUpdater
+	logger *zap.Logger
+	shard  *db.ShardMeta
+	repo   messageSearcherUpdater
 
 	prefetchBuf *prefetch.PriorityBuffer
 
@@ -173,7 +178,7 @@ func (w *DequeueWorker) Run() error {
 				return
 			case <-loopBackoff.After():
 				if err := w.dequeueMessages(loopBackoff); err != nil {
-					fmt.Printf("%v\n", err)
+					w.logger.Error("error fetching messages from database", zap.Error(err))
 				}
 			}
 		}
@@ -263,12 +268,13 @@ type AckNackRequest struct {
 }
 
 // NewAckNackWorker creates a new AckNackWorker
-func NewAckNackWorker(shard *db.ShardMeta, buf chan AckNackRequest) *AckNackWorker {
+func NewAckNackWorker(shard *db.ShardMeta, buf chan AckNackRequest, logger *zap.Logger) *AckNackWorker {
 	ibuf := buf
 	if buf == nil {
 		ibuf = make(chan AckNackRequest, defaultChanSize)
 	}
 	return &AckNackWorker{
+		logger: logger,
 		shard:  shard,
 		repo:   &db.MessageRepository{},
 		buffer: ibuf,
@@ -280,8 +286,9 @@ func NewAckNackWorker(shard *db.ShardMeta, buf chan AckNackRequest) *AckNackWork
 // Because of the sheer amount of ack/nack messages received by the distributed queue, we cannot have http
 // handlers updating records in database shards. This operation is handled asynchronously by the worker.
 type AckNackWorker struct {
-	shard *db.ShardMeta
-	repo  messageAckNacker
+	logger *zap.Logger
+	shard  *db.ShardMeta
+	repo   messageAckNacker
 
 	buffer chan AckNackRequest
 
@@ -303,9 +310,11 @@ func (w *AckNackWorker) Run() error {
 				return
 
 			case ackNack := <-w.buffer:
-				err := w.repo.AckNack(w.shard, ackNack.Id, ackNack.Ack)
-				if err != nil {
-					fmt.Println(err)
+				if err := w.repo.AckNack(w.shard, ackNack.Id, ackNack.Ack); err != nil {
+					w.logger.Error("error ack/nack message",
+						zap.String("id", ackNack.Id.String()),
+						zap.Bool("ack", ackNack.Ack),
+						zap.Error(err))
 				}
 			}
 		}

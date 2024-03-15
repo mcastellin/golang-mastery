@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
+	"go.uber.org/zap"
 )
 
 const (
@@ -69,8 +70,9 @@ type IngestEnvelope struct {
 }
 
 // NewPriorityBuffer creates a new PriorityBuffer struct.
-func NewPriorityBuffer() *PriorityBuffer {
+func NewPriorityBuffer(logger *zap.Logger) *PriorityBuffer {
 	return &PriorityBuffer{
+		logger:   logger,
 		apiReqCh: make(chan GetItemsRequest, defaultChanSize),
 		ingestCh: make(chan IngestEnvelope, defaultChanSize),
 	}
@@ -80,6 +82,7 @@ func NewPriorityBuffer() *PriorityBuffer {
 // for faster delivery to clients.
 // A certain number of items is prefetched for each topic that has messages that are ready to be delivered.
 type PriorityBuffer struct {
+	logger   *zap.Logger
 	apiReqCh chan GetItemsRequest
 	ingestCh chan IngestEnvelope
 

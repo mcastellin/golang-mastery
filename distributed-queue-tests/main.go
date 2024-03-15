@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	targetMessages = 500000
-	defaultTimeout = 20 * time.Second
-	baseUrl        = "http://localhost:8080"
-	numTopics      = 50
+	targetMessages  = 500000
+	defaultTimeout  = 20 * time.Second
+	baseUrl         = "http://localhost:8080"
+	numTopics       = 50
+	statsCheckpoint = 1000
 )
 
 var (
@@ -143,7 +144,6 @@ func attack(namespace string, topics []string) error {
 	total := 0
 	increment := 0
 
-	checkpoint := 1000
 	for count := range notifyCh {
 		total += count
 		increment += count
@@ -155,11 +155,10 @@ func attack(namespace string, topics []string) error {
 			fmt.Printf("total messages: %d, overall throughput(msgs per minute): %.2f \n", total, tpm)
 			return nil
 		}
-		if increment > checkpoint {
+		if increment > statsCheckpoint {
 			incDuration := time.Since(incrementStart)
 			tpm := float64(increment) / incDuration.Minutes()
 			fmt.Printf("total messages: %d, increment: %d, throughput(msgs per minute): %.2f \n", total, increment, tpm)
-			checkpoint += 1000
 			incrementStart = time.Now()
 			increment = 0
 		}

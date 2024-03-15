@@ -6,14 +6,18 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 )
 
 func TestApiServerConcurrency(t *testing.T) {
 	notifyCh := make(chan struct{})
+	logger := zaptest.NewLogger(t, zaptest.Level(zap.WarnLevel))
 
 	port := bindAvailablePort(t)
 	bindAddr := fmt.Sprintf(":%d", port)
-	api := NewApiServer(bindAddr, "/")
+	api := NewApiServer(bindAddr, "/", logger)
 	api.HandleFunc(http.MethodGet, "/test", func(c *ApiCtx) {
 		time.Sleep(100 * time.Millisecond)
 		notifyCh <- struct{}{}
@@ -22,7 +26,9 @@ func TestApiServerConcurrency(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go api.Serve(ctx)
+	notify := make(chan struct{})
+	go api.Serve(ctx, notify)
+	<-notify
 
 	numConcurrent := 100
 	for i := 0; i < numConcurrent; i++ {
@@ -54,10 +60,11 @@ func TestApiServerConcurrency(t *testing.T) {
 }
 
 func TestApiServerBaseUrl(t *testing.T) {
+	logger := zaptest.NewLogger(t, zaptest.Level(zap.WarnLevel))
 
 	port := bindAvailablePort(t)
 	bindAddr := fmt.Sprintf(":%d", port)
-	api := NewApiServer(bindAddr, "/base")
+	api := NewApiServer(bindAddr, "/base", logger)
 	api.HandleFunc(http.MethodGet, "/test/path", func(c *ApiCtx) {
 		c.JsonResponse(http.StatusOK, H{})
 	})
@@ -65,7 +72,9 @@ func TestApiServerBaseUrl(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go api.Serve(ctx)
+	notify := make(chan struct{})
+	go api.Serve(ctx, notify)
+	<-notify
 
 	url := fmt.Sprintf("http://localhost:%d/base/test/path", port)
 	req, err := http.NewRequest(http.MethodGet, url, nil)

@@ -5,10 +5,13 @@ import (
 	"time"
 
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 )
 
 func TestBuffer(t *testing.T) {
-	buf := NewPriorityBuffer()
+	logger := zaptest.NewLogger(t, zaptest.Level(zap.WarnLevel))
+	buf := NewPriorityBuffer(logger)
 	buf.Run()
 	defer buf.Stop()
 

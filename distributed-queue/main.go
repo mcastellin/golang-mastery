@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,7 +32,7 @@ var shardConfs = []struct {
 const defaultBufferSize = 500
 
 type httpServer interface {
-	Serve(context.Context) error
+	Serve(context.Context, chan struct{}) error
 }
 
 type workerStarterStopper interface {
@@ -47,6 +48,8 @@ type App struct {
 }
 
 func (a *App) AddWorker(w workerStarterStopper) {
+	a.logger.Debug("registering background worker",
+		zap.String("type", fmt.Sprintf("%T", w)))
 	a.workers = append(a.workers, w)
 }
 
@@ -63,6 +66,8 @@ func (a *App) Run() error {
 		if err := w.Run(); err != nil {
 			return err
 		}
+		a.logger.Info("background worker started",
+			zap.String("type", fmt.Sprintf("%T", w)))
 		defer w.Stop()
 	}
 
@@ -70,7 +75,7 @@ func (a *App) Run() error {
 		os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	return a.server.Serve(ctx)
+	return a.server.Serve(ctx, nil)
 }
 
 func createApp(bindAddr string, logger *zap.Logger) *App {
@@ -89,33 +94,35 @@ func createApp(bindAddr string, logger *zap.Logger) *App {
 
 	enqueueBuffer := make(chan queue.EnqueueRequest, defaultBufferSize)
 
-	prefetchBuf := prefetch.NewPriorityBuffer()
+	prefetchBuf := prefetch.NewPriorityBuffer(logger)
 	app.AddWorker(prefetchBuf)
 
 	ackNackRouter := &queue.AckNackRouter{}
 
 	for _, shard := range mgr.Shards() {
-		app.AddWorker(queue.NewEnqueueWorker(shard, enqueueBuffer))
-		app.AddWorker(queue.NewDequeueWorker(shard, prefetchBuf))
+		app.AddWorker(queue.NewEnqueueWorker(shard, enqueueBuffer, logger))
+		app.AddWorker(queue.NewDequeueWorker(shard, prefetchBuf, logger))
 
 		ackNackBuf := make(chan queue.AckNackRequest, defaultBufferSize)
-		ackNackW := queue.NewAckNackWorker(shard, ackNackBuf)
+		ackNackW := queue.NewAckNackWorker(shard, ackNackBuf, logger)
 
 		app.AddWorker(ackNackW)
 		ackNackRouter.RegisterWorker(shard.Id, ackNackW)
 	}
 
 	nsService := &NamespaceService{
+		Logger:       logger,
 		MainShard:    mgr.MainShard(),
 		NsRepository: &db.NamespaceRepository{},
 	}
 	msgService := &MessagesService{
+		Logger:        logger,
 		EnqueueBuffer: enqueueBuffer,
 		DequeueBuffer: prefetchBuf,
 		AckNackRouter: ackNackRouter,
 	}
 
-	api := NewApiServer(bindAddr, "/")
+	api := NewApiServer(bindAddr, "/", logger)
 	api.HandleFunc(http.MethodGet, "/ns", nsService.HandleGetNamespaces)
 	api.HandleFunc(http.MethodPost, "/ns", nsService.HandleCreateNamespace)
 	api.HandleFunc(http.MethodPost, "/message/enqueue", msgService.HandleEnqueue)

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/prefetch"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/queue"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/wait"
+	"go.uber.org/zap"
 )
 
 type namespaceGetterCreator interface {
@@ -21,6 +21,7 @@ type namespaceGetterCreator interface {
 }
 
 type NamespaceService struct {
+	Logger       *zap.Logger
 	MainShard    *db.ShardMeta
 	NsRepository namespaceGetterCreator
 }
@@ -68,6 +69,7 @@ func (s *NamespaceService) HandleGetNamespaces(c *ApiCtx) {
 }
 
 type MessagesService struct {
+	Logger        *zap.Logger
 	EnqueueBuffer chan queue.EnqueueRequest
 	DequeueBuffer *prefetch.PriorityBuffer
 	AckNackRouter *queue.AckNackRouter
@@ -218,7 +220,7 @@ func (s *MessagesService) HandleAckNack(c *ApiCtx) {
 	for _, ack := range acks {
 		uid, err := domain.ParseUUID(ack.Id)
 		if err != nil {
-			fmt.Println(err)
+			s.Logger.Error("error parsing UUID", zap.Error(err))
 			continue
 		}
 		req := queue.AckNackRequest{Id: *uid, Ack: ack.Ack}
