@@ -15,6 +15,7 @@ const (
 	dequeueBatchSize             = 100
 	backoffInitialDuration       = 10 * time.Millisecond
 	backoffMaxDuration           = 5 * time.Second
+	topicBackoffMaxDuration      = 5 * time.Second
 	backoffFactor                = 2
 	defaultChanSize              = 300
 	responseCommunicationTimeout = 100 * time.Millisecond
@@ -228,7 +229,7 @@ func (w *DequeueWorker) processPrefetchResponse(items []domain.Message, reply []
 		case prefetch.PrefetchStatusBackoff:
 			b := w.topicBackoffs[items[i].Topic]
 			if b == nil {
-				b = wait.NewBackoff(backoffInitialDuration, backoffFactor, backoffMaxDuration)
+				b = wait.NewBackoff(backoffInitialDuration, backoffFactor, topicBackoffMaxDuration)
 				w.topicBackoffs[items[i].Topic] = b
 			}
 			b.Backoff()

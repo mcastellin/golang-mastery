@@ -55,15 +55,15 @@ func (a *App) SetCleanupFn(cleanup func()) {
 }
 
 func (a *App) Run() error {
+	if a.cleanup != nil {
+		defer a.cleanup()
+	}
+
 	for _, w := range a.workers {
 		if err := w.Run(); err != nil {
 			return err
 		}
 		defer w.Stop()
-	}
-
-	if a.cleanup != nil {
-		defer a.cleanup()
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(),
