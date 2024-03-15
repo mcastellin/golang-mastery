@@ -81,7 +81,7 @@ func (a *App) Run() error {
 func createApp(bindAddr string, logger *zap.Logger) *App {
 	app := &App{logger: logger}
 
-	mgr := &db.ShardManager{}
+	mgr := &db.ShardManager{Logger: logger}
 	for _, c := range shardConfs {
 		_, err := mgr.Add(c.Id, c.Main, c.ConnString)
 		if err != nil {

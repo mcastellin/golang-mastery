@@ -2,7 +2,8 @@ package db
 
 import (
 	"database/sql"
-	"fmt"
+
+	"go.uber.org/zap"
 )
 
 // ShardMeta represents a connected database shard
@@ -34,6 +35,7 @@ func (m *ShardMeta) initialize() error {
 
 // ShardManager maintains the state of active database shards
 type ShardManager struct {
+	Logger *zap.Logger
 	shards []*ShardMeta
 	index  map[uint32]*ShardMeta
 }
@@ -90,7 +92,9 @@ func (m *ShardManager) MainShard() *ShardMeta {
 func (m *ShardManager) Close() {
 	for _, meta := range m.shards {
 		if err := meta.Conn().Close(); err != nil {
-			fmt.Printf("%v\n", err)
+			m.Logger.Error("error closing connection to shard",
+				zap.Uint32("shardId", meta.Id),
+				zap.Error(err))
 		}
 	}
 }
