@@ -1,3 +1,6 @@
+// This program contains a testcase for the distributed-queue project that tries to push the system to its limit
+// by processing as many messages as possbile.
+// The test activates the whole flow: produce -> consume -> ack/nack
 package main
 
 import (
@@ -11,10 +14,10 @@ import (
 )
 
 const (
-	target         int = 1000000
-	defaultTimeout     = 20 * time.Second
-	baseUrl            = "http://localhost:8080"
-	numTopics          = 50
+	targetMessages = 500000
+	defaultTimeout = 20 * time.Second
+	baseUrl        = "http://localhost:8080"
+	numTopics      = 50
 )
 
 var (
@@ -23,6 +26,11 @@ var (
 	urlEnqueueMessage = fmt.Sprintf("%s/message/enqueue", baseUrl)
 	urlDequeueMessage = fmt.Sprintf("%s/message/dequeue", baseUrl)
 	urlAckMessage     = fmt.Sprintf("%s/message/ack", baseUrl)
+)
+
+const (
+	randomMessagePayload  = "alkdsh78f123k7u7&858(7^(^&@#)wejfa8s7u389569354udfjiaasjf{}hjasjfas]fasdkjaf!/10?5%afhkasdf"
+	randomMessageMetadata = "091237ajnfasd8234asdf8{Pajasdf}nasdfkiash{]adsf]asd]a[ashdfa(^(007^^%^&%%8"
 )
 
 func main() {
@@ -88,10 +96,10 @@ func attack(namespace string, topics []string) error {
 					"namespace":           namespace,
 					"topic":               topics[idx],
 					"priority":            rand.Intn(100),
-					"payload":             "asdfasdfasdf",
-					"metadata":            "metadatagasdfasdf",
+					"payload":             randomMessagePayload,
+					"metadata":            randomMessageMetadata,
 					"deliverAfterSeconds": rand.Intn(10),
-					"ttlSeconds":          300,
+					"ttlSeconds":          900,
 				})
 				if err != nil {
 					fmt.Println(err)
@@ -129,24 +137,31 @@ func attack(namespace string, topics []string) error {
 		go consumer(notifyCh, namespace, topics[i])
 	}
 
-	start := time.Now()
+	overallStart := time.Now()
+	incrementStart := time.Now()
+
 	total := 0
+	increment := 0
 
 	checkpoint := 1000
 	for count := range notifyCh {
 		total += count
-		if total >= target {
+		increment += count
+		if total >= targetMessages {
 			close(closingCh)
-			fmt.Println("total messages processed:", total)
-			totalDuration := time.Since(start)
-			fmt.Printf("throughput mess per minute: %.2f\n", float64(total)/totalDuration.Minutes())
+
+			overallDuration := time.Since(overallStart)
+			tpm := float64(total) / overallDuration.Minutes()
+			fmt.Printf("total messages: %d, overall throughput(msgs per minute): %.2f \n", total, tpm)
 			return nil
 		}
-		if total > checkpoint {
-			fmt.Println("total messages processed:", total)
-			totalDuration := time.Since(start)
-			fmt.Printf("throughput mess per minute: %.2f\n", float64(total)/totalDuration.Minutes())
+		if increment > checkpoint {
+			incDuration := time.Since(incrementStart)
+			tpm := float64(increment) / incDuration.Minutes()
+			fmt.Printf("total messages: %d, increment: %d, throughput(msgs per minute): %.2f \n", total, increment, tpm)
 			checkpoint += 1000
+			incrementStart = time.Now()
+			increment = 0
 		}
 	}
 
