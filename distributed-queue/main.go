@@ -18,15 +18,21 @@ import (
 // TODO
 // shard configuration is fixed for now. Once I implement scale-out logic to dynamically add
 // and remove shards to ShardManager db connections be auto-discovered by the system.
+var dbUser string = envOrDefault("POSTGRES_USER", "user")
+var dbPasswd string = envOrDefault("POSTGRES_PASSWD", "changeme")
+var dbHost string = envOrDefault("POSTGRES_HOST", "localhost")
+
+const connString = "postgres://%s:%s@%s:%d/foqs?sslmode=disable"
+
 var shardConfs = []struct {
 	Id         uint32
 	Main       bool
 	ConnString string
 }{
-	{uint32(10), true, "postgres://user:changeme@localhost:5431/foqs?sslmode=disable"},
-	{uint32(20), false, "postgres://user:changeme@localhost:5432/foqs?sslmode=disable"},
-	{uint32(30), false, "postgres://user:changeme@localhost:5433/foqs?sslmode=disable"},
-	{uint32(40), false, "postgres://user:changeme@localhost:5434/foqs?sslmode=disable"},
+	{uint32(10), true, fmt.Sprintf(connString, dbUser, dbPasswd, dbHost, 5431)},
+	{uint32(20), false, fmt.Sprintf(connString, dbUser, dbPasswd, dbHost, 5432)},
+	{uint32(30), false, fmt.Sprintf(connString, dbUser, dbPasswd, dbHost, 5433)},
+	{uint32(40), false, fmt.Sprintf(connString, dbUser, dbPasswd, dbHost, 5434)},
 }
 
 const defaultBufferSize = 500
@@ -134,6 +140,14 @@ func createApp(bindAddr string, logger *zap.Logger) *App {
 	app.server = api
 
 	return app
+}
+
+func envOrDefault(key, defaultValue string) string {
+	v := os.Getenv(key)
+	if len(v) == 0 {
+		return defaultValue
+	}
+	return v
 }
 
 func main() {
