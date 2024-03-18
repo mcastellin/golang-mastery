@@ -2,20 +2,67 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/lib/pq"
 	"github.com/mcastellin/golang-mastery/distributed-queue/pkg/domain"
+	objcache "github.com/mcastellin/golang-mastery/objects-cache"
 )
 
+const (
+	cacheTTLDuration = time.Minute
+	cacheMaxObjects  = 500
+)
+
+func NewNamespaceRepository() *NamespaceRepository {
+	c := objcache.NewObjectsCache(cacheMaxObjects, cacheTTLDuration)
+	return &NamespaceRepository{
+		itemsCache: c,
+	}
+}
+
 // NamespaceRepository has methods to handle database operations for Namespace objects.
-type NamespaceRepository struct{}
+type NamespaceRepository struct {
+	itemsCache *objcache.ObjectsCache
+}
 
 func (r *NamespaceRepository) Save(shard *ShardMeta, item *domain.Namespace) error {
 	statement := "INSERT INTO namespaces (id, name) VALUES ($1, $2) RETURNING id"
 
 	newUid := domain.NewUUID(shard.Id)
-	return shard.Conn().QueryRow(statement, newUid.Bytes(), item.Name).Scan(&item.Id)
+	err := shard.Conn().QueryRow(statement, newUid.Bytes(), item.Name).Scan(&item.Id)
+	if err == nil {
+		r.itemsCache.Delete(newUid.String())
+	}
+	return err
+}
+
+// CachedFindByStringId finds a Namespace by Id
+// Even though this application relies on a sharded database, namespaces are only stored in a "main" shard
+// and are not replicated to avoid introducing additional complexity.
+// To avoid creating a query hotspot on the main database this method uses an in-memory objects cache to cache
+// namespaces.
+func (r *NamespaceRepository) CachedFindByStringId(shard *ShardMeta, id string) (*domain.Namespace, error) {
+	retrieveFn := func(id string) (any, error) {
+		row, err := r.FindByStringId(shard, id)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// result not found will be cached as nil to prevent bad consumers
+			// from creating a query hotspot
+			return nil, nil
+		case err != nil:
+			return nil, err
+		default:
+			return row, nil
+		}
+	}
+	item, err := objcache.GetCachedResource(r.itemsCache, id, retrieveFn)
+	if err != nil {
+		return nil, err
+	}
+
+	return item.Value.(*domain.Namespace), nil
 }
 
 func (r *NamespaceRepository) FindByStringId(shard *ShardMeta, id string) (*domain.Namespace, error) {

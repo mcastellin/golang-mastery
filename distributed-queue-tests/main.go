@@ -152,7 +152,8 @@ func attack(namespace string, topics []string) error {
 
 			overallDuration := time.Since(overallStart)
 			tpm := float64(total) / overallDuration.Minutes()
-			fmt.Printf("total messages: %d, overall throughput(msgs per minute): %.2f \n", total, tpm)
+			fmt.Printf("total messages: %d, overall throughput(msgs per minute): %.2f, total duration: %s\n",
+				total, tpm, overallDuration.String())
 			return nil
 		}
 		if increment > statsCheckpoint {

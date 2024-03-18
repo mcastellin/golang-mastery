@@ -20,7 +20,8 @@ Here's a list of the projects I've been working on. In you're interested in any 
         - implementation of the [Gossip protocol](https://en.wikipedia.org/wiki/Gossip_protocol) to maintain cluster membership information for distributed applications
 - [x] [dns-server](/dns-server/)
         - implementation of a toy DNS server capable of serving DNS requests from A-type records stored locally or forwarding requests to authoritative servers upstream
-- [x] [distributed-queue](/distributed-queue/) An implementation of a distributed queue based on [FOQS](https://engineering.fb.com/2021/02/22/production-engineering/foqs-scaling-a-distributed-priority-queue/) (Facebook Ordered Queuing Service) 
+- [x] [distributed-queue](/distributed-queue/) - an implementation of a distributed queue based on [FOQS](https://engineering.fb.com/2021/02/22/production-engineering/foqs-scaling-a-distributed-priority-queue/) (Facebook Ordered Queuing Service) 
+- [x] [objects-cache](/objects-cache/) - an in-memory objects cache implementation to support the distributed-queue project
 
 
 ## Future project ideas
