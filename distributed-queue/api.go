@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
@@ -97,7 +95,7 @@ func (s *MessagesService) HandleEnqueue(c *ApiCtx) {
 	}
 
 	ns, err := s.NsRepository.CachedFindByStringId(s.MainShard, req.Namespace)
-	if errors.Is(err, sql.ErrNoRows) {
+	if ns == nil {
 		c.JsonResponse(http.StatusNotFound, H{"error": "invalid namespace"})
 		return
 	} else if err != nil {

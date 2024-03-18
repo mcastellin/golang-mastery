@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/lib/pq"
@@ -30,19 +31,35 @@ func (r *NamespaceRepository) Save(shard *ShardMeta, item *domain.Namespace) err
 	statement := "INSERT INTO namespaces (id, name) VALUES ($1, $2) RETURNING id"
 
 	newUid := domain.NewUUID(shard.Id)
-	return shard.Conn().QueryRow(statement, newUid.Bytes(), item.Name).Scan(&item.Id)
+	err := shard.Conn().QueryRow(statement, newUid.Bytes(), item.Name).Scan(&item.Id)
+	if err == nil {
+		r.itemsCache.Delete(newUid.String())
+	}
+	return err
 }
 
 // CachedFindByStringId finds a Namespace by Id
-// TODO add proper comment
+// Even though this application relies on a sharded database, namespaces are only stored in a "main" shard
+// and are not replicated to avoid introducing additional complexity.
+// To avoid creating a query hotspot on the main database this method uses an in-memory objects cache to cache
+// namespaces.
 func (r *NamespaceRepository) CachedFindByStringId(shard *ShardMeta, id string) (*domain.Namespace, error) {
-	item := r.itemsCache.Get(id)
-	if item == nil {
-		v, err := r.FindByStringId(shard, id)
-		if err != nil {
-			return v, err
+	retrieveFn := func(id string) (any, error) {
+		row, err := r.FindByStringId(shard, id)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// result not found will be cached as nil to prevent bad consumers
+			// from creating a query hotspot
+			return nil, nil
+		case err != nil:
+			return nil, err
+		default:
+			return row, nil
 		}
-		item = r.itemsCache.Put(v.Id.String(), v)
+	}
+	item, err := objcache.GetCachedResource(r.itemsCache, id, retrieveFn)
+	if err != nil {
+		return nil, err
 	}
 
 	return item.Value.(*domain.Namespace), nil
