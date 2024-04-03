@@ -111,7 +111,6 @@ In this implementation, if the `cancelCh` is closed before the operation sub-rou
 to request graceful termination.
 
 
-
 ### 3.1. The `select-case` construct in Go
 
 `select-case` is a variation of the `switch-case` construct designed to simplify handling communication over multiple channels.
@@ -152,6 +151,7 @@ func main() {
 
 In this second example, *the `select` activates the `case` corresponding to the interaction that completes first
 (our 1-second timer in this case)* giving us a chance to exit the program if the `boolCh` is inactive for too long.
+
 
 ### 3.2. Cancelling an operation with channel
 
