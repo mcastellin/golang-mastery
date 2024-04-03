@@ -6,23 +6,25 @@ import (
 	"time"
 )
 
-// An example type that represents a long-running uninterruptible operation
-// like a complex computation, a database transaction or HTTP interaction
+// [cwl:blk blockingOp]
+
+// mockComplexOp represents a long-running, uninterruptible operation
+// like a complex computation, a database transaction or an HTTP request
 type mockComplexOp struct {
 	Duration time.Duration
 	timer    *time.Timer
 }
 
-// Perform the long-running operation.
+// Do performs the uninterruptible operation.
 // This mock implementation just sleeps for a set Duration
 func (op *mockComplexOp) Do() error {
 	op.timer = time.NewTimer(op.Duration)
-
+	// reading from timer's channel is uninterruptible
 	<-op.timer.C
 	return nil
 }
 
-// Gracefully stops the long-running operation
+// Stop will gracefully terminate the long-running operation
 func (op *mockComplexOp) Stop() {
 	if op.timer != nil {
 		if !op.timer.Stop() {
@@ -31,48 +33,78 @@ func (op *mockComplexOp) Stop() {
 	}
 }
 
+// [/cwl:blk]
+
 type longRunningOp interface {
 	Do() error
 	Stop()
 }
 
-// This function is just an example of how to execute a long running operation
-// in the background without cancellation option
-func runOpOnce(op longRunningOp, completed chan struct{}) {
+// [cwl:blk runOnce]
+
+// runOpOnce is just an example of how to execute a long-running operation in the
+// background without any option for task cancellation.
+func runOpOnce(op longRunningOp, completedCh chan struct{}) {
 	op.Do()
-	close(completed)
+	close(completedCh)
 }
 
-// This function executes the long-running operation with the option for
-// cancellation using a cancel channel.
+// [/cwl:blk]
+
+// runOpWithCancelCh executes the long-running operation with the option for
+// graceful termination using a cancelCh channel.
 //
 // Note that all signal channels are of type `chan struct{}` so the empty struct
 // won't allocate any memory.
-// Another important aspect of using signal channels is that rather than writing data
-// to the chan we use the `close(chan)`. Sending data to an unbuffered chan is a blocking
-// operation, as opposed to closing the channel which doesn't block program execution
-func runOpWithCancelCh(op longRunningOp, completed chan struct{}, cancel chan struct{}) {
-	defer close(completed)
-
-	fnCompleted := make(chan struct{})
-	go func() {
-		op.Do()
-		close(fnCompleted)
-	}()
-
-	select {
-	case <-cancel:
-		op.Stop()
-	case <-fnCompleted:
-	}
-}
-
-// This function executes the long-running operation using context to handle cancellation.
+// Another important aspect of using signal channels is that rather than reading/writing
+// signals to the chan we use the `close(chan)`. The main benefit of using close instead of
+// communicating signal codes is that writing to a channel could block program execution if
+// the channel is unbuffered or full and there no other process is actively consuming it.
+// Closing the channel is a safer option in this regard and has the side benefit of affecting
+// multiple routines blocked on channel read using a single operation.
 //
-// With context the cancellation logic is not necessarily simpler. It provides a nicer
-// interface for the caller, which can wrap parent contexts and set timeouts and deadlines.
-func runOpWithContext(ctx context.Context, op longRunningOp, completed chan struct{}) {
-	defer close(completed)
+// [cwl:blk cancelWithChannel]
+func runOpWithCancelCh(
+	op longRunningOp,
+	completedCh chan struct{},
+	cancelCh chan struct{}) {
+
+	// decouple uninterruptible operation from its wrapper
+	// by running in a new sub-routine, allowing this function
+	// to handle cancellation logic.
+	innerCompletedCh := make(chan struct{})
+	go func() {
+		op.Do()
+		close(innerCompletedCh)
+	}()
+
+	select {
+	case <-innerCompletedCh:
+		// normal program execution, background process completed
+		// successfully.
+
+	case <-cancelCh:
+		// received cancellation signal before operation could
+		// complete. Requesting termination.
+		op.Stop()
+	}
+
+	// always sending completion signal to avoid blocking callers
+	close(completedCh)
+}
+
+// [/cwl:blk]
+
+// [cwl:blk cancelWithContext]
+
+// runOpWithContext executes the long-running operation and handle cancellation
+// when the Context is Done.
+func runOpWithContext(
+	ctx context.Context,
+	op longRunningOp,
+	completed chan struct{}) {
+
+	// decouple uninterruptible operation from its wrapper
 	fnCompleted := make(chan struct{})
 	go func() {
 		op.Do()
@@ -80,11 +112,21 @@ func runOpWithContext(ctx context.Context, op longRunningOp, completed chan stru
 	}()
 
 	select {
-	case <-ctx.Done():
-		op.Stop()
 	case <-fnCompleted:
+		// normal program execution, background process completed
+		// successfully.
+
+	case <-ctx.Done():
+		// Context timed-out or cancelled before operation could
+		// complete. Requesting termination.
+		op.Stop()
 	}
+
+	// always sending completion signal to avoid blocking callers
+	close(completed)
 }
+
+// [/cwl:blk]
 
 func main() {
 	fmt.Println("Usage: Run with `go test ./... -v`")
