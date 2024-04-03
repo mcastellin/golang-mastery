@@ -1,7 +1,7 @@
 package main
 
 /*
-[cwl:par 00]
+[cwl:p 00]
 ---
 layout: post
 title: "Background Tasks And Cancellation In Go (lang)"
@@ -19,11 +19,11 @@ excerpt: >-
   In this article, we'll learn how to run tasks in the background using Go and implement
   graceful termination.
 ---
-[/cwl:par]
+[/cwl:p]
 */
 
 /*
-[cwl:par 10]
+[cwl:p 10]
 ## 1. Overview
 Task cancellation is straightforward for iterative background tasks that run inside a `for` loop,
 though long-running one-time operations can be trickier.
@@ -34,20 +34,20 @@ bail out prematurely.
 #### Example of long-running operation
 
 Let's take a look at this implementation:
-[cwl:lnk blockingOp fullSrc=true]
+[cwl:l blockingOp fullSrc=true]
 
 As simple as the `mockComplexOp` is, it represents a real-world scenario where we need
 to perform a certain task that is not interruptible. Examples of these tasks are:
 - Complex *oneshot* calculations, like rendering tasks
 - I/O operations, like reading from files or completing a database transaction
 - HTTP interactions with other web servers
-[/cwl:par]
+[/cwl:p]
 
-[cwl:par 20]
+[cwl:p 20]
 ## 2. Background Tasks In Go
-[/cwl:par]
+[/cwl:p]
 
-[cwl:par 20.1]
+[cwl:p 20.1]
 The `go` programming language makes it super-easy to run background tasks. In *Golang* they're called
 goroutines, and all we need to do to run one is use the `go` keyword, followed by a function call:
 
@@ -64,7 +64,7 @@ if the main program exits.**
 
 In Go, the only way to interact with a goroutine is by using specific structures called **channels**.
 
-[cwl:lnk runOnce fullSrc=true]
+[cwl:l runOnce fullSrc=true]
 
 In this example, `runOnce()` is a simple wrapper function that simply calls the `Do()` method on a `longRunningOp`
 interface and notify the caller as soon as the operation is completed.
@@ -88,9 +88,9 @@ func main() {
 	fmt.Println("operation completed")
 }
 ```
-[/cwl:par]
+[/cwl:p]
 
-[cwl:par 30]
+[cwl:p 30]
 ## 3. Task Cancellation Using Channels
 
 In the previous section, we learned how **closing a Go channel can be used to send and receive signals between goroutines**.
@@ -98,7 +98,7 @@ In the previous section, we learned how **closing a Go channel can be used to se
 We can now create a new version of the previous wrapper function that can receive a termination signal on the `cancelCh` channel
 and attempt a graceful termination for the operation:
 
-[cwl:lnk cancelWithChannel fullSrc=true]
+[cwl:l cancelWithChannel fullSrc=true]
 
 The first thing this function does is **decouple the long-running operation from the wrapper**. Because the operation is
 uninterruptible, we can't handle cancellation if the routine is busy running the operation.
@@ -158,11 +158,11 @@ In this second example, *the `select` activates the `case` corresponding to the 
 The last thing we need to do is use the `runOpWithCancelCh` to run a new operation and cancel it before it
 can complete:
 
-[cwl:lnk testRunWithCancelCh fullSrc=true]
+[cwl:l testRunWithCancelCh fullSrc=true]
 
-[/cwl:par]
+[/cwl:p]
 
-[cwl:par 40]
+[cwl:p 40]
 ## 4. Cancellation Using Context
 
 Since version *1.7*, the `context` package has been introduced into Go's *standard library*. It provides **a way to
@@ -173,23 +173,23 @@ nicer interface for the function caller.
 
 Let's get into it:
 
-[cwl:lnk cancelWithContext  fullSrc=true]
+[cwl:l cancelWithContext  fullSrc=true]
 
 The implementation is almost identical, except for the cancellation `case` in the handling logic.
 To receive the cancellation signal from a `context.Context` all we have to do is read from the `ctx.Done()` channel.
 
 And lastly, here is how we call the function to handle cancellation with context:
 
-[cwl:lnk testRunWithContextCancel fullSrc=true]
+[cwl:l testRunWithContextCancel fullSrc=true]
 
-[/cwl:par]
+[/cwl:p]
 
-[cwl:par 99]
+[cwl:p 99]
 ## 5. Conclusion
 
 In this article, we learned different ways to gracefully cancel long-running operations running Go subroutines.
 
 As always, all examples used in this post and more are available
 <a href="https://github.com/mcastellin/golang-mastery/tree/main/background-task-cancellation" target="_blank">over on GitHub</a>
-[/cwl:par]
+[/cwl:p]
 */

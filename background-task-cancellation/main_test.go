@@ -35,7 +35,7 @@ func TestBackgroundTaskOnceToCompletion(t *testing.T) {
 	close(cancelCh)
 }
 
-// [cwl:blk testRunWithCancelCh]
+// [cwl:b testRunWithCancelCh]
 func TestBackgroundTaskWithChanCancel(t *testing.T) {
 	// long-running operation will block for 5 seconds
 	op := &mockComplexOp{Duration: 5 * time.Second}
@@ -57,9 +57,9 @@ func TestBackgroundTaskWithChanCancel(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("task execution was not cancelled timely")
 	}
-} // [/cwl:blk]
+} // [/cwl:b]
 
-// [cwl:blk testRunWithContextCancel]
+// [cwl:b testRunWithContextCancel]
 func TestBackgroundTaskWithContext(t *testing.T) {
 	// long-running operation will block for 5 seconds
 	op := &mockComplexOp{Duration: 5 * time.Second}
@@ -79,4 +79,4 @@ func TestBackgroundTaskWithContext(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("task execution was not cancelled timely")
 	}
-} // [/cwl:blk]
+} // [/cwl:b]

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// [cwl:blk blockingOp]
+// [cwl:b blockingOp]
 
 // mockComplexOp represents a long-running, uninterruptible operation
 // like a complex computation, a database transaction or an HTTP request
@@ -33,14 +33,14 @@ func (op *mockComplexOp) Stop() {
 	}
 }
 
-// [/cwl:blk]
+// [/cwl:b]
 
 type longRunningOp interface {
 	Do() error
 	Stop()
 }
 
-// [cwl:blk runOnce]
+// [cwl:b runOnce]
 
 // runOpOnce is just an example of how to execute a long-running operation in the
 // background without any option for task cancellation.
@@ -49,7 +49,7 @@ func runOpOnce(op longRunningOp, completedCh chan struct{}) {
 	close(completedCh)
 }
 
-// [/cwl:blk]
+// [/cwl:b]
 
 // runOpWithCancelCh executes the long-running operation with the option for
 // graceful termination using a cancelCh channel.
@@ -63,7 +63,7 @@ func runOpOnce(op longRunningOp, completedCh chan struct{}) {
 // Closing the channel is a safer option in this regard and has the side benefit of affecting
 // multiple routines blocked on channel read using a single operation.
 //
-// [cwl:blk cancelWithChannel]
+// [cwl:b cancelWithChannel]
 func runOpWithCancelCh(
 	op longRunningOp,
 	completedCh chan struct{},
@@ -93,9 +93,9 @@ func runOpWithCancelCh(
 	close(completedCh)
 }
 
-// [/cwl:blk]
+// [/cwl:b]
 
-// [cwl:blk cancelWithContext]
+// [cwl:b cancelWithContext]
 
 // runOpWithContext executes the long-running operation and handle cancellation
 // when the Context is Done.
@@ -126,7 +126,7 @@ func runOpWithContext(
 	close(completed)
 }
 
-// [/cwl:blk]
+// [/cwl:b]
 
 func main() {
 	fmt.Println("Usage: Run with `go test ./... -v`")
