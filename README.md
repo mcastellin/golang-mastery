@@ -32,3 +32,4 @@ Here's a list of the projects I've been working on. In you're interested in any 
 * Refactor gossip protocol to exchange gossip rounds using UDP multicasting to maximise network performance
 * Extend the distributed queue with account management. Implement authentication and access control so an account can only interact with its own namespaces.
 * Instrument distributed-queue application with OpenTelemetry
+* Implement an Authentication microservice using JWT
