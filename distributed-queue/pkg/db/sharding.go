@@ -6,6 +6,11 @@ import (
 	"go.uber.org/zap"
 )
 
+type shardEventsReceiver interface {
+	AddShard()
+	DropShard()
+}
+
 // ShardMeta represents a connected database shard
 type ShardMeta struct {
 	Id         uint32
@@ -38,6 +43,7 @@ type ShardManager struct {
 	Logger *zap.Logger
 	shards []*ShardMeta
 	index  map[uint32]*ShardMeta
+	rcvrs  []shardEventsReceiver
 }
 
 // Add a connection to an existing database shard

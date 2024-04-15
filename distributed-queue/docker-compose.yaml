@@ -1,6 +1,17 @@
 version: "3.9"
 
 services:
+  app:
+    profiles:
+      - disable
+    build: .
+    ports:
+      - "8080:8080/tcp"
+    environment:
+      POSTGRES_PASSWD: "changeme"
+      POSTGRES_USER: "user"
+      POSTGRES_HOST: "postgres?" # problem here
+
   postgres1:
     image: postgres:16.2
     ports:
